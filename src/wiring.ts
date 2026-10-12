@@ -186,6 +186,11 @@ import { createDockerDeployProvider } from "./deploy/docker-deploy-provider.ts";
 import { createAwsDeployProvider, type StoredDeployBody } from "./deploy/aws-deploy-provider.ts";
 import { createFlyDeployProvider, type FlyMachineConfig } from "./deploy/fly-deploy-provider.ts";
 import { createPorterDeployProvider, type StoredPorterDeployBody } from "./deploy/porter-deploy-provider.ts";
+import {
+  createE2bDeployProvider,
+  E2B_DEPLOY_IDLE_TIMEOUT_SEC,
+  type StoredE2bDeployBody,
+} from "./deploy/e2b-deploy-provider.ts";
 import type { DeployProvider } from "./deploy/deploy-provider.ts";
 import { createDeployService } from "./deploy/deploy-service.ts";
 import {
@@ -1697,6 +1702,23 @@ export function buildApp(
         advisoryLock,
         store: artifactMap<StoredPorterDeployBody>("porter_deploy_bodies"),
       }),
+    e2b: () => {
+      const e2b = config.e2bSandbox;
+      if (!e2b.apiKey) throw new Error("E2B_API_KEY not set (DEPLOY_PROVIDER=e2b)");
+      return createE2bDeployProvider({
+        client: createSdkE2bClient({
+          apiKey: e2b.apiKey,
+          ...(e2b.templateId ? { templateId: e2b.templateId } : {}),
+          sandboxTtlMs: E2B_DEPLOY_IDLE_TIMEOUT_SEC * 1000,
+          ...(e2b.maxLifetimeSec ? { maxLifetimeMs: e2b.maxLifetimeSec * 1000 } : {}),
+          ...(e2b.proxy ? { proxy: e2b.proxy } : {}),
+        }),
+        ...(e2b.namePrefix ? { namePrefix: e2b.namePrefix } : {}),
+        idleTimeoutSec: E2B_DEPLOY_IDLE_TIMEOUT_SEC,
+        advisoryLock,
+        store: artifactMap<StoredE2bDeployBody>("e2b_deploy_bodies"),
+      });
+    },
   };
   if (
     config.deployProvider === "fly" &&

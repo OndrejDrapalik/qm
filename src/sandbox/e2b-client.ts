@@ -19,6 +19,8 @@ export interface E2bMetrics {
 
 export interface E2bSession {
   readonly sandboxId: string;
+  readonly trafficAccessToken?: string;
+  host(port: number): string;
   runCommand(command: string, opts?: E2bRunOpts): Promise<E2bCommandResult>;
 
   readFileBytes(absPath: string): Promise<Uint8Array | null>;
@@ -64,6 +66,8 @@ interface E2bCreateOpts {
   metadata: Record<string, string>;
   timeoutMs?: number;
   autoPause?: boolean;
+  autoResume?: boolean;
+  privateTraffic?: boolean;
   fromSnapshot?: string;
 }
 
@@ -204,6 +208,8 @@ export function createSdkE2bClient(opts: SdkE2bClientOptions): E2bClient {
     };
     return {
       sandboxId: sbx.sandboxId,
+      ...(sbx.trafficAccessToken ? { trafficAccessToken: sbx.trafficAccessToken } : {}),
+      host: (port) => sbx.getHost(port),
       async runCommand(command, runOpts): Promise<E2bCommandResult> {
         const timeoutMs = runOpts?.timeoutMs ?? maxCommandMs;
         await cover(timeoutMs);
@@ -303,8 +309,13 @@ export function createSdkE2bClient(opts: SdkE2bClientOptions): E2bClient {
         ...common,
         timeoutMs,
         metadata: createOpts.metadata,
-        lifecycle: { onTimeout: createOpts.autoPause ? "pause" : "kill", autoResume: false },
-        ...(network ? { network } : {}),
+        lifecycle: {
+          onTimeout: createOpts.autoPause ? "pause" : "kill",
+          autoResume: !!(createOpts.autoPause && createOpts.autoResume),
+        },
+        ...(network || createOpts.privateTraffic
+          ? { network: { ...network, ...(createOpts.privateTraffic ? { allowPublicTraffic: false } : {}) } }
+          : {}),
       });
       return wrap(lib, sbx, timeoutMs);
     },

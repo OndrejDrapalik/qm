@@ -622,6 +622,11 @@ test("DEPLOY_PROVIDER=porter selects the Porter deploy provider and reads its en
   });
 });
 
+test("DEPLOY_PROVIDER=e2b selects E2B publishing and needs the E2B key", () => {
+  assert.equal(loadConfig({ DEPLOY_PROVIDER: "e2b", E2B_API_KEY: "e2b-key" }).deployProvider, "e2b");
+  assert.throws(() => loadConfig({ DEPLOY_PROVIDER: "e2b" }), /missing or insecure required core secrets: E2B_API_KEY/);
+});
+
 test("the deploy runner image falls back to the sandbox image", () => {
   const config = loadConfig({
     DEPLOY_PROVIDER: "porter",

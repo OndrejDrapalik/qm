@@ -71,3 +71,26 @@ Rebuilding from unchanged inputs uses E2B's build cache. Existing sandboxes keep
 template they were created from; a paused scope sandbox only picks up a new template
 after it is destroyed or restored from a recovery snapshot, which is itself a template
 derived from the old image.
+
+## Published apps
+
+`DEPLOY_PROVIDER=e2b` runs each published app in its own E2B sandbox, created from
+`E2B_TEMPLATE_ID` so an app gets the same machine as the agent that built it. It uses
+the same `E2B_API_KEY`.
+
+- The sandbox is created with `lifecycle: { onTimeout: "pause", autoResume: true }`. It
+  pauses ten minutes after it starts or resumes, and the next request to its URL resumes
+  it with memory intact, so the app process keeps running across pauses. E2B keeps paused
+  sandboxes until they are killed.
+- Its URL is `https://<port>-<sandbox>.<e2b domain>`, created with
+  `network.allowPublicTraffic: false`. Only core holds the sandbox's traffic access token
+  and sends it as `e2b-traffic-access-token` when it proxies a request, so viewers still
+  go through QM's sign-in and sharing at `/d/<app>/` or the apps domain.
+- A new version replaces `/home/user/app` in the running sandbox and restarts the
+  entrypoint. `/home/user/data` (`$DATA_DIR`) survives redeploys and pauses; deleting the
+  app kills the sandbox and its data.
+- An always-on app is created with a 24 hour timeout. E2B still pauses it when that
+  window ends, and the next request resumes it.
+
+See [Auto-resume](https://e2b.dev/docs/sandbox/auto-resume) and
+[Restricting public access](https://e2b.dev/docs/network/restrict-public-access).
