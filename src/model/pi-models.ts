@@ -8,7 +8,7 @@ import { isCustomModelId, resolveCustomModel } from "./custom-providers.ts";
 const getModel = getBuiltinModel as unknown as (provider: string, id: string) => Model<Api> | undefined;
 
 export const DEFAULT_AGENT_MODEL_ID = "claude-opus-5";
-export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol";
+export const DEFAULT_CODEX_MODEL_ID = "gpt-6.1-sol";
 /**
  * pi-ai's ChatGPT-subscription provider: the same model ids as "openai",
  * served from the Codex backend and authenticated with a ChatGPT OAuth

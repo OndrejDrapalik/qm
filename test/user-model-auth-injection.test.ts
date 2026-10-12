@@ -164,7 +164,7 @@ test("routing: openai OAuth login -> codex harness (not pi)", () => {
   const r = resolveIndividualAuthRouting(null, oauth("openai"), undefined);
   assert.equal(r?.kind, "oauth");
   assert.equal(r?.harness, "codex");
-  assert.equal(r?.model, "gpt-5.6-sol");
+  assert.equal(r?.model, "gpt-6.1-sol");
 });
 
 test("routing: requested model provider wins when that provider is connected", () => {
@@ -176,7 +176,7 @@ test("routing: openai OAuth + pi org -> pi harness on the Codex subscription pro
   const r = resolveIndividualAuthRouting(null, oauth("openai"), undefined, "pi");
   assert.equal(r?.kind, "oauth");
   assert.equal(r?.harness, "pi");
-  assert.equal(r?.model, "codex/gpt-5.6-sol");
+  assert.equal(r?.model, "codex/gpt-6.1-sol");
 });
 
 test("routing: pi org keeps a requested openai model, namespaced to the subscription provider", () => {
