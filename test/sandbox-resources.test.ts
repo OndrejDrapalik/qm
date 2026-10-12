@@ -902,3 +902,29 @@ test("two concurrent turns on one parking computer: only the last turn to finish
   assert.deepEqual(teardowns, [{ keepWarm: true }, {}]);
   assert.deepEqual((await resources.get(record.id)).holders, []);
 });
+
+test("sign-in warm-up creates one default computer on first sign-in, then only wakes it", async () => {
+  const { resources, records, provisioned } = fixture(undefined, []);
+  await Promise.all([resources.warmDefault("bob", "personal:bob"), resources.warmDefault("bob", "personal:bob")]);
+  const created = await resources.resolve("personal:bob");
+  assert.equal(created?.state, "ready");
+  assert.equal(created?.createdBy, "bob");
+  assert.equal((await records.entries()).length, 1);
+  const before = provisioned.length;
+  await resources.warmDefault("bob", "personal:bob");
+  assert.equal(provisioned.length, before + 1);
+  assert.equal(provisioned.at(-1), created?.backingScopeId);
+  assert.equal((await records.entries()).length, 1);
+});
+
+test("sign-in warm-up respects a cleared default and never creates for other scopes", async () => {
+  const { resources, records, provisioned } = fixture(undefined, []);
+  await resources.warmDefault("bob", "personal:bob");
+  await resources.setDefault("bob", "personal:bob", null);
+  const before = provisioned.length;
+  await resources.warmDefault("bob", "personal:bob");
+  assert.equal(provisioned.length, before);
+  assert.equal(await resources.resolve("personal:bob"), null);
+  await assert.rejects(resources.warmDefault("bob", "personal:carol"), /permission to use its owning scope/);
+  assert.equal((await records.entries()).length, 1);
+});

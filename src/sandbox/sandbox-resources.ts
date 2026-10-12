@@ -1,5 +1,5 @@
 import { withLiveTurnMembership } from "../resolution/scope-membership.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DurableMap } from "../persistence/durable-map.ts";
 import type { AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { parseScopeId, type CommandPolicy, type EgressPolicy, type ScopeId } from "../types.ts";
@@ -65,6 +65,7 @@ export interface SandboxResources {
   release(id: string, runId: string | undefined, isLive: (runId: string) => Promise<boolean>): Promise<boolean>;
   setDefault(actorId: string, scopeId: ScopeId, id: string | null): Promise<void>;
   resolve(scopeId: ScopeId): Promise<SandboxResource | null>;
+  warmDefault(actorId: string, scopeId: ScopeId): Promise<void>;
   get(id: string): Promise<SandboxResource>;
   defaultBackend(): SandboxBackendName;
 }
@@ -118,7 +119,7 @@ export function createSandboxResources(opts: {
       return action();
     });
   };
-  return {
+  const resources: SandboxResources = {
     forTurn: (turn) =>
       createSandboxResources({
         ...opts,
@@ -298,5 +299,28 @@ export function createSandboxResources(opts: {
         await opts.defaults.put(scopeId, { sandboxId: id });
       });
     },
+    async warmDefault(actorId, scopeId) {
+      await initialize();
+      const route = await opts.defaults.get(scopeId);
+      if (!route) {
+        const id = `default-${createHash("sha256").update(scopeId).digest("hex").slice(0, 32)}`;
+        if (await opts.records.get(id)) return;
+        const created = await resources.create(actorId, scopeId, opts.defaultBackend, "Default computer", id);
+        await resources.setDefault(actorId, scopeId, created.id);
+        return;
+      }
+      if (!route.sandboxId) return;
+      await authorize(actorId, scopeId);
+      const record = await get(route.sandboxId);
+      const backend = opts.backends[record.backend];
+      if (record.state !== "ready" || !backend) return;
+      await use(record.id, async () => {
+        await backend.provision(
+          [{ scopeId: record.backingScopeId, mountPath: "/", mode: "rw" }],
+          await opts.provisionOptions?.(scopeId),
+        );
+      });
+    },
   };
+  return resources;
 }

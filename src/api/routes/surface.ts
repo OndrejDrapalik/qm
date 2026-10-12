@@ -659,6 +659,7 @@ async function sessionCapability(ctx: ApiCtx): Promise<void> {
     secret,
     deps.capabilityTokenCompression,
   );
+  deps.warmPersonalComputer?.(actor.p);
   return sendJson(res, 200, { token });
 }
 

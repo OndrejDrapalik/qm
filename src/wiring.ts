@@ -2958,6 +2958,19 @@ export function buildApp(
   };
 }
 
+const PERSONAL_WARM_INTERVAL_MS = 10 * 60_000;
+
+function personalComputerWarmer(resources: SandboxResources): (actorId: string) => void {
+  const warmedAt = new Map<string, number>();
+  return (actorId) => {
+    const now = Date.now();
+    if (now - (warmedAt.get(actorId) ?? 0) < PERSONAL_WARM_INTERVAL_MS) return;
+    warmedAt.set(actorId, now);
+    for (const [id, at] of warmedAt) if (now - at >= PERSONAL_WARM_INTERVAL_MS) warmedAt.delete(id);
+    void resources.warmDefault(actorId, personalScope(actorId)).catch(swallowAs("sandbox: sign-in warm-up", undefined));
+  };
+}
+
 export function serverDeps(
   config: Config,
   built: BuiltApp,
@@ -3098,5 +3111,6 @@ export function serverDeps(
     sessionShareBytes: built.sessionShareBytes,
     environments: built.environments,
     sandboxResources: built.sandboxResources,
+    ...(config.eagerProvisionEnabled ? { warmPersonalComputer: personalComputerWarmer(built.sandboxResources) } : {}),
   };
 }
