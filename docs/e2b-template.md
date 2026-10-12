@@ -72,6 +72,37 @@ template they were created from; a paused scope sandbox only picks up a new temp
 after it is destroyed or restored from a recovery snapshot, which is itself a template
 derived from the old image.
 
+## Egress
+
+E2B can filter a sandbox's outbound traffic itself (`network.allowOut` / `denyOut`), but
+those rules cannot carry QM's egress policy, so QM keeps its own proxy as the enforcement
+point and uses E2B's rules only to make that proxy unavoidable:
+
+- QM policies are deny lists over open egress as well as allow lists. E2B accepts host
+  names only in `allowOut`; `denyOut` takes IPs and CIDR ranges only, and allow rules
+  always win over deny rules, so "allow `github.com` but not `gist.github.com`" has no
+  E2B form.
+- E2B matches host names only on ports 80 and 443 (HTTP `Host` and TLS SNI). Other
+  ports, such as SSH to a git host, fall back to IP rules.
+- QM resolves the policy per turn and per speaker and signs it into the turn's egress
+  token. E2B rules are per sandbox, and one scope's computer serves concurrent turns from
+  different people.
+- The proxy also writes the egress audit log and checks the turn token; E2B's firewall
+  does neither.
+
+Set `E2B_EGRESS_PROXY_URL` to a QM egress proxy reachable on port 443, for example
+`deploy/egress-proxy-pub` (TLS on 443 in front of the proxy's port 48080). Core then
+creates every agent computer with `allowOut: [<proxy host>]` and `denyOut: ["0.0.0.0/0"]`
+and points the computer's proxy settings at it with the turn's token. Without it, core
+warns at boot and computers have open egress.
+
+The proxy cannot run inside a core that is itself an E2B sandbox: E2B's public URL edge
+forwards HTTP but answers `CONNECT` with 405, so sibling sandboxes cannot use it as a
+forward proxy. Run it where it gets a real TCP listener on 443, and give it the same
+`CORE_SIGNING_SECRET` as core so it can verify turn tokens.
+
+See [Internet access](https://e2b.dev/docs/network/internet-access).
+
 ## Published apps
 
 `DEPLOY_PROVIDER=e2b` runs each published app in its own E2B sandbox, created from
