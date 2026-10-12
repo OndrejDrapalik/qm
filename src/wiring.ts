@@ -2958,7 +2958,7 @@ export function buildApp(
   };
 }
 
-const PERSONAL_WARM_INTERVAL_MS = 10 * 60_000;
+const PERSONAL_WARM_INTERVAL_MS = 30_000;
 
 function personalComputerWarmer(resources: SandboxResources): (actorId: string) => void {
   const warmedAt = new Map<string, number>();

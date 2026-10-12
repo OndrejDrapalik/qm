@@ -713,6 +713,10 @@ async function coreFetchCap(
   return { status: r.status, text: await r.text() };
 }
 
+function warmPersonalComputer(): void {
+  void coreFetch("POST", "/v1/session-cap?warm=1", "").catch(() => undefined);
+}
+
 async function relayCore(res: ServerResponse, method: HttpMethod, pathWithQuery: string, rawBody = ""): Promise<void> {
   relay(res, await coreFetch(method, pathWithQuery, rawBody));
 }
@@ -3383,6 +3387,7 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
 
   if (method === "GET") {
     if (path.startsWith("/assets/")) return await serveStatic(res, path);
+    if (!extname(path)) warmPersonalComputer();
     if (await serveVite(req, res, path)) return;
     return await serveStatic(res, path === "/" ? "/index.html" : path);
   }

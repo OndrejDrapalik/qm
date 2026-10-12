@@ -650,7 +650,7 @@ async function restoreSelfMemory(ctx: ApiCtx): Promise<void> {
 }
 
 async function sessionCapability(ctx: ApiCtx): Promise<void> {
-  const { res, deps, actor } = ctx;
+  const { res, deps, actor, url } = ctx;
   if (!actor) return sendJson(res, 401, { error: "unauthorized", message: "portal identity required" });
   const secret = deps.capabilitySecret ?? ctx.secret;
   if (!secret) return sendJson(res, 503, { error: "not_configured", message: "capability secret not set" });
@@ -659,7 +659,7 @@ async function sessionCapability(ctx: ApiCtx): Promise<void> {
     secret,
     deps.capabilityTokenCompression,
   );
-  deps.warmPersonalComputer?.(actor.p);
+  if (url.searchParams.get("warm") === "1") deps.warmPersonalComputer?.(actor.p);
   return sendJson(res, 200, { token });
 }
 
