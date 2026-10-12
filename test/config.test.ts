@@ -755,6 +755,7 @@ test("the active provider's own apps domain reaches the gate when DEPLOY_APPS_DO
 test("DEPLOY_APPS_DOMAIN refuses shared platform domains that cannot carry per-app subdomains", () => {
   assert.throws(() => loadConfig({ DEPLOY_APPS_DOMAIN: "myapp.onporter.run" }), /shared platform domain/);
   assert.throws(() => loadConfig({ DEPLOY_APPS_DOMAIN: "myapp.fly.dev" }), /shared platform domain/);
+  assert.throws(() => loadConfig({ DEPLOY_APPS_DOMAIN: "8081-abc.e2b.app" }), /shared platform domain/);
   assert.equal(
     loadConfig({ DEPLOY_APPS_DOMAIN: "apps.example.com", AWS_DEPLOY_GATE_SECRET: "0123456789abcdef0123456789abcdef" })
       .deployAppsDomain,

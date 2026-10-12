@@ -1609,6 +1609,12 @@ export async function shareDeployment(ctx: ApiCtx): Promise<void> {
         error: "bad_request",
         message: "public access and person/scope access must be changed separately",
       });
+    if (b.public && !(ctx.deps.deployAppsDomain && ctx.deps.deployGateSecret))
+      return sendJson(res, 409, {
+        error: "public_links_unavailable",
+        message:
+          "This instance serves apps at /d/<app>/ on its own domain, which always requires sign-in, so a public link would still ask visitors to sign in. Public links need an apps domain: set DEPLOY_APPS_DOMAIN to a domain with a wildcard DNS record routed to the portal, and AWS_DEPLOY_GATE_SECRET.",
+      });
     try {
       const deployment = await app.setDeploymentPublic(params.id!, b.public, { createdBy: capability.actorId });
       return sendJson(res, 200, {

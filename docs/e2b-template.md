@@ -122,6 +122,11 @@ the same `E2B_API_KEY`.
   app kills the sandbox and its data.
 - An always-on app is created with a 24 hour timeout. E2B still pauses it when that
   window ends, and the next request resumes it.
+- Apps served at `/d/<app>/` always require sign-in, so "anyone with the link" sharing
+  needs an apps domain (`DEPLOY_APPS_DOMAIN` plus `AWS_DEPLOY_GATE_SECRET`) with a
+  wildcard DNS record routed to the portal. `e2b.app` cannot carry per-app subdomains, so
+  a core running inside an E2B sandbox needs a domain you control in front of it. Without
+  one, a request to make an app public is refused.
 
 See [Auto-resume](https://e2b.dev/docs/sandbox/auto-resume) and
 [Restricting public access](https://e2b.dev/docs/network/restrict-public-access).

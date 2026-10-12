@@ -815,6 +815,7 @@ const SHARED_PLATFORM_SUFFIXES = [
   "github.io",
   "pages.dev",
   "workers.dev",
+  "e2b.app",
 ];
 
 function sharedPlatformSuffixOf(domain: string): string | undefined {

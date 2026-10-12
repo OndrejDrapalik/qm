@@ -73,6 +73,10 @@ function callShare(
   id: string,
   body: unknown,
   featureFlags = externalSharingOn,
+  appsGateway: { deployAppsDomain?: string; deployGateSecret?: string } = {
+    deployAppsDomain: "apps.example.com",
+    deployGateSecret: "gate",
+  },
 ) {
   const out: { status?: number; body?: any } = {};
   const res = {
@@ -84,7 +88,14 @@ function callShare(
       out.body = d ? JSON.parse(d) : undefined;
     },
   };
-  const ctx = { res, app, deps: { featureFlags }, params: { id }, body, capability } as unknown as ApiCtx;
+  const ctx = {
+    res,
+    app,
+    deps: { featureFlags, ...appsGateway },
+    params: { id },
+    body,
+    capability,
+  } as unknown as ApiCtx;
   return shareDeployment(ctx).then(() => out);
 }
 
@@ -564,6 +575,23 @@ test("deployment public access is explicit, owner-only, and reversible", async (
   assert.equal(disabled.status, 200);
   assert.equal(disabled.body.public, false);
   assert.equal((await app.getDeployment("public-toggle"))?.public, undefined);
+});
+
+test("without an apps domain, a public link is refused instead of reported as open", async () => {
+  const { app } = apiHarness();
+  await app.deploy({
+    ownerScopeId: scopeId("personal", "U1"),
+    createdBy: "U1",
+    entrypoint: "x",
+    files: [],
+    name: "path-only",
+  });
+  const refused = await callShare(app, cap("U1"), "path-only", { public: true }, externalSharingOn, {});
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, "public_links_unavailable");
+  assert.equal((await app.getDeployment("path-only"))?.public, undefined);
+  const restricted = await callShare(app, cap("U1"), "path-only", { public: false }, externalSharingOn, {});
+  assert.equal(restricted.status, 200);
 });
 
 test("with external app sharing off, public links and outside emails are refused while org sharing still works", async () => {
