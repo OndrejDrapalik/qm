@@ -125,8 +125,8 @@ test("company ChatGPT-only deployments offer their plain GPT default through man
       modelsByHarness: Record<string, string[]>;
       unavailableReason?: string;
     };
-    assert.equal(body.effective.modelId, "gpt-5.6-sol");
-    assert.ok(body.modelsByHarness.pi?.includes("gpt-5.6-sol"));
+    assert.equal(body.effective.modelId, "gpt-6.1-sol");
+    assert.ok(body.modelsByHarness.pi?.includes("gpt-6.1-sol"));
     assert.equal(body.unavailableReason, undefined);
   } finally {
     await srv.close();
