@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { LRUCache } from "lru-cache";
 import type { Deployment, DeploymentVersion } from "./deploy-store.ts";
 import type { DeployEndpoint, DeployProvider } from "./deploy-provider.ts";
-import { waitAppReady } from "./shared-deploy-provider.ts";
+import {
+  APP_PID_PATH,
+  appLaunch,
+  appLogs,
+  appReporter,
+  waitAppReady,
+  type AppErrorSink,
+} from "./shared-deploy-provider.ts";
 import { normalizeRelPath, readTree } from "./deploy-fs.ts";
 import { makeTar } from "../sandbox/tar.ts";
 import { E2bSandboxGoneError, type E2bClient, type E2bSession } from "../sandbox/e2b-client.ts";
@@ -15,8 +22,6 @@ import { swallow } from "../util/errors.ts";
 const HOME_DIR = "/home/user";
 const APP_DIR = `${HOME_DIR}/app`;
 const DATA_DIR = `${HOME_DIR}/data`;
-const PID_PATH = `${HOME_DIR}/.qm-app.pid`;
-const LOG_PATH = `${HOME_DIR}/.qm-app.log`;
 const APP_PORT_DEFAULT = 8080;
 const ENDPOINT_PORT = 443;
 const READY_WINDOW_SEC_DEFAULT = 60;
@@ -45,6 +50,7 @@ export interface E2bDeployProviderOptions {
   resolveCacheMs?: number;
   store?: DurableMap<StoredE2bDeployBody>;
   advisoryLock?: AdvisoryLock;
+  onError?: AppErrorSink;
 }
 
 export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployProvider {
@@ -96,13 +102,13 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
       throw new Error(`e2b deploy: unpacking into ${guestDir} failed: ${(r.stderr || r.stdout).slice(0, 300)}`);
   }
 
-  async function install(session: E2bSession, version: DeploymentVersion): Promise<void> {
+  async function install(d: Deployment, session: E2bSession, version: DeploymentVersion): Promise<void> {
     const stop =
-      `pid=$(cat ${shq(PID_PATH)} 2>/dev/null || true); ` +
+      `pid=$(cat ${shq(APP_PID_PATH)} 2>/dev/null || true); ` +
       `if [ -n "$pid" ]; then kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; ` +
       `for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.3; done; ` +
       `kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; fi; ` +
-      `rm -rf ${shq(APP_DIR)} ${shq(PID_PATH)}; mkdir -p ${shq(APP_DIR)} ${shq(DATA_DIR)}`;
+      `rm -rf ${shq(APP_DIR)} ${shq(APP_PID_PATH)}; mkdir -p ${shq(APP_DIR)} ${shq(DATA_DIR)}`;
     const stopped = await exec(session, stop, 60);
     if (stopped.code !== 0)
       throw new Error(`e2b deploy: stopping the previous version failed: ${stopped.stderr.slice(0, 300)}`);
@@ -115,18 +121,12 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
       ["DATA_DIR", DATA_DIR],
     ];
     const inner = `${env.map(([k, v]) => `export ${k}=${shq(v)}`).join("; ")}; cd ${shq(APP_DIR)}; ${version.entrypoint}`;
-    const launch = `sh -c ${shq(inner)} < /dev/null > ${shq(LOG_PATH)} 2>&1 & echo $! > ${shq(PID_PATH)}`;
-    const started = await exec(
-      session,
-      `if command -v setsid >/dev/null 2>&1; then setsid ${launch}; else ${launch}; fi`,
-      60,
-    );
+    const started = await exec(session, appLaunch(inner, appPort), 60);
     if (started.code !== 0) throw new Error(`e2b deploy: app start failed: ${started.stderr.slice(0, 300)}`);
     await waitAppReady((script, timeoutSec) => exec(session, script, timeoutSec), {
       appPort,
       windowSec: readyWindowSec,
-      pidPath: PID_PATH,
-      logPath: LOG_PATH,
+      report: appReporter(opts.onError, d, version.env),
     });
   }
 
@@ -170,7 +170,7 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
         resolveCache.delete(d.id);
         const existing = await connectStored(d);
         if (existing) {
-          await install(existing.session, version);
+          await install(d, existing.session, version);
           await killStrays(d, existing.stored.sandboxId);
           return endpointOf(existing.stored);
         }
@@ -183,7 +183,7 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
           privateTraffic: true,
         });
         try {
-          await install(session, version);
+          await install(d, session, version);
           const body: StoredE2bDeployBody = {
             deploymentId: d.id,
             sandboxId: session.sandboxId,
@@ -216,8 +216,7 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
     async logs(d, logOpts): Promise<string | null> {
       const live = await connectStored(d);
       if (!live) return null;
-      const lines = Math.max(1, Math.min(2000, Math.floor(logOpts.tailLines)));
-      return (await exec(live.session, `tail -n ${lines} ${shq(LOG_PATH)} 2>/dev/null || true`, 30)).stdout;
+      return appLogs((script, timeoutSec) => exec(live.session, script, timeoutSec), logOpts.tailLines);
     },
 
     destroy: (d) =>

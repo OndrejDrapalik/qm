@@ -1,4 +1,5 @@
 import type { TeamChange } from "../../teams/teams.ts";
+import { decisionsResource } from "./decisions-resource.ts";
 import { parseAckEmoji } from "../../slack/config.ts";
 import { orgId as configOrgId } from "../../config.ts";
 import type { ServerDeps } from "../deps.ts";
@@ -10,11 +11,14 @@ import {
   fastModeModelIds,
   harnessSupportsFastMode,
   HARNESS_IDS,
+  harnessIdOrPi,
   isHarnessId,
   modelSupportedByHarness,
   modelServiceable,
   modelProviderAvailabilityFor,
   resolveModel,
+  resolveEmbeddingModel,
+  embeddingModelCatalog,
   thinkingLevelsForHarness,
   selectableBaseModels,
   ALL_PROVIDERS_AVAILABLE,
@@ -58,7 +62,7 @@ const AUTO_FLAGGER_MAX_RUBRIC_CHARS = 20_000;
 
 /** The flagger a deployment falls back to when nothing is configured. */
 export function defaultAutoFlaggerConfig(deps: Pick<ServerDeps, "harnessId" | "baseModelDefault">): AutoFlaggerDraft {
-  const harnessId = (isHarnessId(deps.harnessId ?? "") ? deps.harnessId : "pi") as HarnessId;
+  const harnessId = harnessIdOrPi(deps.harnessId);
   return {
     harnessId,
     modelId: defaultModelForHarness(harnessId, deps.baseModelDefault),
@@ -208,6 +212,7 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
       return { ok: true };
     },
   },
+  decisionsResource,
   {
     id: "approval-grant-modes",
     kind: "custom",
@@ -508,6 +513,30 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
     ),
   },
   {
+    id: "memory-embedding-model",
+    kind: "enum",
+    target: "org",
+    clearable: true,
+    readKey: "memoryEmbeddingModel",
+    get enumValues() {
+      return embeddingModelCatalog();
+    },
+    get: (deps) => deps.config!.getEmbeddingModelDurable(),
+    apply: async (ctx, _actor, scope) => {
+      const bad = orgOnly(scope, "the memory embedding model is org-wide");
+      if (bad) return bad;
+      const { modelId } = ctx.body as { modelId?: unknown };
+      if (modelId !== null && (typeof modelId !== "string" || !modelId.trim()))
+        return { error: "Provide an embedding modelId, or null to disable semantic recall" };
+      if (modelId !== null) {
+        await ctx.deps.refreshModels?.();
+        if (!resolveEmbeddingModel(modelId as string)) return { error: "Unknown or unverified embedding model" };
+      }
+      await ctx.deps.config!.setEmbeddingModel(modelId as string | null);
+      return { ok: true };
+    },
+  },
+  {
     id: "base-model",
     kind: "enum",
     target: "any",
@@ -552,7 +581,7 @@ export const ADMIN_RESOURCES: readonly AdminResource[] = [
             : {}),
         });
       } else {
-        const harnessId = isHarnessId(ctx.deps.harnessId) ? ctx.deps.harnessId : "pi";
+        const harnessId = harnessIdOrPi(ctx.deps.harnessId);
         const effective = await resolveRuntimeChoiceDurable(ctx.deps.config!, scopeId("org", configOrgId()), scope, {
           harnessId,
           modelId: defaultModelForHarness(harnessId, ctx.deps.baseModelDefault),

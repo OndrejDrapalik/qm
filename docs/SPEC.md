@@ -14,7 +14,7 @@
 
 **Agent turns.** The system revolves around durable execution against a central writeahead log: the session tape. To execute an agent turn, a session offers up a write lease, at which point a worker claims it from the run queue. The _orchestrator_ assembles context and drives a harness, which fulfills tool calls, and the result is committed to the session tape. The system should be robust to interruption at any time, end to end, and scale to swarms that are millions of agents strong.
 
-**Swappable harnesses and models.** Agents have a single tool catalog; their turns can be fulfilled by Pi, Codex, Claude Code or OpenCode, which call into the model catalog, the canonical source for model varieties, effort levels, speed multipliers, and their prices. A particular selection of those variables fulfilling a turn is called the _runtime_.
+**Swappable harnesses and models.** Agents have a single tool catalog; their turns can be fulfilled by Pi or Claude Code, which call into the model catalog, the canonical source for model varieties, effort levels, speed multipliers, and their prices. A particular selection of those variables fulfilling a turn is called the _runtime_.
 
 **Scopes.** The original model was one OpenClaw per-person or per-channel. That means isolated compute, memory, files, crons, and apps. Breaking through that isolation requires an explicit and auditable _grant_.
 
@@ -32,9 +32,9 @@
 
 ## Wall of shame
 
-Patterns from this repo's history, with the PRs that introduced or removed them.
+Patterns from this repo's history, with the PRs that introduced or removed them. Lenses marked _always reviewed_ get a reviewer on every PR; triage cannot mark them not relevant.
 
-### Overengineering (6 examples)
+### Overengineering (always reviewed, 6 examples)
 
 Let sLOC +/- be your guide here. Small and net-negative LOC fixes will be rewarded. This codebase at baseline is flabby -- many bugs can be fixed by _deleting_, _removing_, _simplifying_. For features: use restraint when adding new subsystems that increase surface area and widen the config matrix we will have to support.
 
@@ -47,10 +47,11 @@ Past mistakes and examples:
 - **Harness/model selection** (2026-07-17): A selector grew into a proposed "agent profile" platform with its own catalog, preference layers, upgrade acknowledgments, readiness handling, and cohort rollout. The smaller solution extended the existing scoped setting with a `{ harness, model }` pair and reused the existing configuration and picker machinery. [qm#2134](https://github.com/yc-software/qm/pull/2134).
 - **Admin tool** (2026-09-17–18): Concern about oversized responses grew into a 43-file, roughly 4,580-line patch with field limits, custom JSON validation, layered timeouts, duplicate concurrency limits, and a special handshake. Only after pushback did the agent inventory actual calls and identify large transcripts as the concrete risk. The replacement used bounded transcript pagination and a thin read-only tool: 9 files, +329/−18. _Source/status:_ original transcript and patch not yet recovered; size and rejection claims are unverified.
 
-### Band-aid fixes (10 examples)
+### Band-aid fixes (always reviewed, 11 examples)
 
 Hiding a symptom while leaving its true cause unfixed. Smells here are special cases (string matching and regex are especially bad), many-branched conditionals acquiring _yet another_ branch. A bug isn't a problem to fix, it is useful evidence that the system we have built is flawed.
 
+- **Credential handle prefix:** The prompt lists shared credentials as `service_gitlab`, and `execute.credentials` takes that name, but the credential broker matches the bare slug `gitlab` and answers the prefixed name with `403 not_entitled`. QM read that as a missing grant. The proposed fix stripped a leading `service_` in the broker, so both spellings would work. That teaches one more caller to tolerate two names instead of removing the second name: a credential should have one name across the prompt, `execute.credentials`, and the broker. (2026-10-13)
 - **Slack task completion:** A proposed acknowledgment fix reconstructed completion from descendant runs, mailbox returns, the latest conversation turn, and delivery-key prefixes. Core needed to own request completion through delegation and final delivery, then expose that state to Slack; moving the same guesses into a helper would not fix the missing ownership. [qm#2135](https://github.com/yc-software/qm/pull/2135).
 - **Transcript row grouping:** A proposed UI fix joined adjacent assistant rows only when the second contained subagent activity. Multiple commentary messages, intervening tools, and resumed turns defeated the special case. Grouping events by their actual turn/run identity would give streaming and reloaded history the same response structure. [qm#2136](https://github.com/yc-software/qm/pull/2136).
 - **Credential capture:** Indiscriminate credential collection swept up oversized browser profiles. The proposed fix recognized browser-profile marker files and skipped those directories, adding another exception to the sweep. The deeper fix was to let the agent identify which credential files to preserve, or explicitly request capture of changes from an authentication turn. [qm#2137](https://github.com/yc-software/qm/pull/2137).
@@ -62,19 +63,19 @@ Hiding a symptom while leaving its true cause unfixed. Smells here are special c
 - **[qm#394](https://github.com/yc-software/qm/pull/394)** (2026-08-13): Memory tool silently coerces malformed `remember` calls (content/query/bare string) into facts instead of fixing the tool schema.
 - **[qm#469](https://github.com/yc-software/qm/pull/469)** (2026-08-13): Sandbox status collapses any unanswering shell into a 'wedged' verdict with baked-in 'restart the computer' advice.
 
-### Duplication (7 examples)
+### Duplication (always reviewed, 7 examples)
 
 Giving the same behavior or fact multiple independent implementations or sources of truth. These copies drift, disagree, and multiply maintenance work; reuse the existing owner or consolidate the competing paths.
 
 - **[qm#1776](https://github.com/yc-software/qm/pull/1776)** (2026-09-30): Sprites cold-boot '503 Process not ready' exec re-send implemented on main after the same fix ([qm#1489](https://github.com/yc-software/qm/pull/1489)) had already landed only on the long-lived factory side branch.
 - **[qm#1520](https://github.com/yc-software/qm/pull/1520)** (2026-09-22): Factory required pasted factory-anthropic/-github/-linear/-slack keychain secrets duplicating core's own model auth and connectors (two sources of truth); QM-73..76 resolve from core config/owner connectors instead. _Status:_ wound back in [qm#1520](https://github.com/yc-software/qm/pull/1520), [qm#1522](https://github.com/yc-software/qm/pull/1522), [qm#1523](https://github.com/yc-software/qm/pull/1523), [qm#1524](https://github.com/yc-software/qm/pull/1524) (on factory branch).
 - **[qm#1476](https://github.com/yc-software/qm/pull/1476)** (2026-09-21): Context settings had its own model picker separate from the composer's; switched to reuse the composer model/preset picker. _Status:_ wound back in [qm#1476](https://github.com/yc-software/qm/pull/1476) (both plugins/web-ui/src/model-picker.ts and context-model.ts still exist).
-- **[qm#1272](https://github.com/yc-software/qm/pull/1272)** (2026-09-16): Session transcripts are kept in both session_entries and session_tape, with SESSION_TAPE_MODE shadow/serve choosing between them.
+- **[qm#1272](https://github.com/yc-software/qm/pull/1272)** (2026-09-16): Session transcripts are kept in both session_entries and session_tape, with SESSION_TAPE_MODE shadow/serve choosing between them. Fixed in [qm#2273](https://github.com/yc-software/qm/pull/2273): code uses only session_entries.
 - **[qm#1185](https://github.com/yc-software/qm/pull/1185)** (2026-09-15): Each subscriber held its own LISTEN connection and pg-boss kept its own pool; consolidated to one listener per process and the shared query pool. _Status:_ wound back in [qm#1185](https://github.com/yc-software/qm/pull/1185).
 - **[qm#993](https://github.com/yc-software/qm/pull/993)** (2026-09-08): Chat search queried both the dedicated search index and legacy entry history for every visible conversation, causing timeouts. _Status:_ wound back in [qm#993](https://github.com/yc-software/qm/pull/993).
 - **[qm#488](https://github.com/yc-software/qm/pull/488)** (2026-08-13): Web-UI /api router had ~50 hand-copied body-parse/relay/path-decode fragments that drifted (some returned 400 instead of 413). _Status:_ wound back in [qm#488](https://github.com/yc-software/qm/pull/488).
 
-### Hand-rolling (5 examples)
+### Hand-rolling (always reviewed, 5 examples)
 
 Reimplementing a capability that an existing SDK, library, or supported API already provides. Custom protocols and plumbing make us own edge cases that the maintained integration already handles; use that integration when it meets the requirements.
 
@@ -84,7 +85,7 @@ Reimplementing a capability that an existing SDK, library, or supported API alre
 - **[qm#1419](https://github.com/yc-software/qm/pull/1419)** (2026-09-22): Sprites backend used raw REST fetches; moved to Sprites SDK 0.2.3 (WebSocket exec, filesystem APIs, checkpoints); sibling PRs #1420-#1422 aligned Modal/E2B/Smolmachines with provider docs. _Status:_ wound back in [qm#1419](https://github.com/yc-software/qm/pull/1419).
 - **[qm#1407](https://github.com/yc-software/qm/pull/1407)** (2026-09-22): Internal Fly transports piped data through `fly ssh console` (broke on Windows PTY); replaced with Machines exec API stdin. _Status:_ wound back in [qm#1407](https://github.com/yc-software/qm/pull/1407).
 
-### Non-durability (5 examples)
+### Non-durability (always reviewed, 5 examples)
 
 This is a distributed system that needs work to endure through deploys and crashes without hiccups. A common agent mistake has been to store data in process memory. Postgres is effectively the core's filesystem -- think of core memory as a cache at best.
 
@@ -94,7 +95,7 @@ This is a distributed system that needs work to endure through deploys and crash
 - **Completed runs with missing replies:** A run was durably marked complete, but enqueueing its delivery depended on an in-process `onTerminal` callback. A crash between completion and enqueue left finished work with no delivery. The fix scans persisted terminal runs and reconstructs missing deliveries. _Status:_ fixed in [qm#2053](https://github.com/yc-software/qm/pull/2053).
 - **Webhook work already in flight:** `runOnce` guarded running webhook work with a process-local `inflight` Set, while the receiver's durable idempotency check recognized only committed fires. A retry routed to another instance during a long turn could start the same work again. _Status:_ still present on main; [qm#1943](https://github.com/yc-software/qm/pull/1943) proposes shared Postgres claims and includes a two-instance regression test.
 
-### Config-matrix expansion (10 examples)
+### Config-matrix expansion (always reviewed, 10 examples)
 
 Helpful KPIs here are: how many env vars do we have? how large is the database schema? Implicit modes in the form of conditionals, text matching or hard-coded flags also count. The combined footprint of this config matrix is currently enormous and makes our task much more difficult. Driving this down is critical and PRs that reduce the size of these will be rewarded.
 
@@ -173,12 +174,18 @@ Keeping old endpoints, data shapes, and code paths alive next to their replaceme
 
 - **Credential capture redesign** (2026-10-08): The login-as-a-skill handoff planned that "a stale skill calling /v1/keychain/use gets a clear refusal" and that "logins saved under the old capture system still load." Both keep the old system on life support. Remove the endpoint and the old capture system outright; stale skills fail and get fixed. _Status:_ [qm#2146](https://github.com/yc-software/qm/pull/2146) deletes `/v1/keychain/use` (open).
 - **Sandbox routing retirement** (2026-10-02): Retiring `sandbox_routing` came with a locked, marker-guarded one-time upgrade import that preserved legacy IDs, explicit nulls, and machine IDs, kept the old table as rollback input, and told operators to keep credentials for legacy-mapped providers. A plain migration would have done. _Status:_ merged in [qm#2019](https://github.com/yc-software/qm/pull/2019).
-- **Session tape beside session entries** (2026-09-16): The tape was meant to replace `session_entries`, but caution kept both. `SESSION_TAPE_MODE` shadow/serve chose between them, exact-transcript annotations were added so the tape could reproduce every historical field, and a verifying, lease-aware operator backfill with dry runs and partial-scan statuses guarded the cutover. We got stuck here for weeks; one migration and a hard cutover would have left one system instead of two. _Status:_ both stores and the mode flag remain on main ([qm#1272](https://github.com/yc-software/qm/pull/1272)).
+- **Session tape beside session entries** (2026-09-16): The tape was meant to replace `session_entries`, but caution kept both. `SESSION_TAPE_MODE` shadow/serve chose between them, exact-transcript annotations were added so the tape could reproduce every historical field, and a verifying, lease-aware operator backfill with dry runs and partial-scan statuses guarded the cutover. We got stuck here for weeks; one migration and a hard cutover would have left one system instead of two. _Status:_ code reads and writes only `session_entries` since [qm#2273](https://github.com/yc-software/qm/pull/2273); `session_tape` is dropped by a gated migration once its step metadata has been copied out ([qm#2280](https://github.com/yc-software/qm/pull/2280)).
 - **Legacy Inbox loop:** `src/loops/inbox-migration.ts` migrates each owner's legacy Inbox loop at runtime, with its own phase record in UI-state preferences, a pause-and-disable sequence, and a repair path for half-finished runs. _Status:_ still on main; deletion approved for the loops rebuild.
 
 ### Over-testing
 
 Description and examples pending human input.
+
+### Prod-like QA (1 example)
+
+QA every behavior change in a prod-like setting on the real system it touches before merge. Mocks and unit tests don't count; a missing credential is a blocker to solve or report, not a reason to merge.
+
+- **Shipped changes for a provider without testing on that provider** (2026-10-12): [qm#2226](https://github.com/yc-software/qm/pull/2226) changed how the Fly deploy provider starts and supervises apps, and merged with only mocked unit tests for Fly. The agent had no working Fly token and shipped anyway.
 
 ### Performance (3 examples)
 

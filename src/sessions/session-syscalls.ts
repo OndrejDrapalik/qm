@@ -12,6 +12,7 @@ import { filterHistoryForAudience } from "../resolution/context-filter.ts";
 import { randomUUID } from "node:crypto";
 import { hashId } from "../util/crypto.ts";
 import { canonicalJson } from "../util/objects.ts";
+import type { CoreSearch } from "../search/core-search.ts";
 import type { ScopeId, Session, SessionEntry, SpawnMeta } from "../types.ts";
 import type { OrchestratorInput } from "../core/orchestrator/types.ts";
 import type { Run, RunStore } from "../runs/run-store.ts";
@@ -174,7 +175,7 @@ type SessionListResult = { ok: true; sessions: SessionSummary[] } | { ok: false;
 
 type SessionReadResult =
   | { ok: true; mode: "children"; children: SessionChildSummary[] }
-  | { ok: true; mode: "tape"; sessionId: string; title: string; status: string; rendered: string }
+  | { ok: true; mode: "transcript"; sessionId: string; title: string; status: string; rendered: string }
   | { ok: false; message: string };
 
 interface SessionSyscallBinding {
@@ -212,6 +213,7 @@ export interface SessionSyscalls {
   open(input: SessionOpenInput): Promise<SessionOpenResult>;
   write(input: SessionWriteInput): Promise<SessionWriteResult>;
   read(input: SessionReadInput): Promise<SessionReadResult>;
+  search?(input: { query: string; limit?: number }): ReturnType<CoreSearch["search"]>;
   list?(): Promise<SessionListResult>;
   start?(input: SessionStartInput): Promise<SessionStartResult>;
 }
@@ -248,6 +250,7 @@ export interface SessionSyscallDeps {
   authorize?: (session: Session, actorId: string) => Promise<boolean>;
   validateRuntime?: (input: SessionOpenInput, scopeId: ScopeId) => Promise<void>;
   conversations?: {
+    search?: CoreSearch["search"];
     list(actorId: string): Promise<Session[]>;
     start(
       actorId: string,
@@ -344,9 +347,6 @@ function childRunRequest(child: Session, meta: SpawnMeta, text: string, displayT
         ? { destination: meta.origin.destination }
         : {}),
       ...(meta.origin?.kind === "automation" && meta.origin.useOwnerKeychain ? { useOwnerKeychain: true } : {}),
-      ...(meta.origin?.kind === "automation" && meta.origin.ownerResourcesRequireOpen
-        ? { ownerResourcesRequireOpen: true }
-        : {}),
       screenData: text,
     },
     ...(meta.unattendedGrants ? { unattendedGrants: [...meta.unattendedGrants] } : {}),
@@ -686,7 +686,6 @@ export function createSessionSyscalls(deps: SessionSyscallDeps): SessionSyscalls
                       origin: {
                         kind: "automation" as const,
                         ...(caller.origin.useOwnerKeychain ? { useOwnerKeychain: true } : {}),
-                        ...(caller.origin.ownerResourcesRequireOpen ? { ownerResourcesRequireOpen: true } : {}),
                         ...(caller.origin.destination ? { destination: caller.origin.destination } : {}),
                       },
                     }
@@ -935,12 +934,28 @@ export function createSessionSyscalls(deps: SessionSyscallDeps): SessionSyscalls
           if (rendered.length > maxChars) rendered = `…${rendered.slice(rendered.length - maxChars)}`;
           return {
             ok: true,
-            mode: "tape",
+            mode: "transcript",
             sessionId: target.id,
             title: visibleTitle(target),
             status: await statusOf(target),
             rendered: rendered || "[no readable entries yet]",
           };
+        },
+        async search(input) {
+          const caller = await currentCaller();
+          const refusal = sidebarRefusal();
+          if (refusal) throw new Error(refusal);
+          const search = deps.conversations?.search;
+          if (!search) throw new Error("session search isn't available on this deployment.");
+          const members = caller.conversation.publishMembers;
+          if (caller.conversation.kind !== "dm" && !members?.length)
+            throw new Error("search requires the complete principal set for a shared conversation");
+          if (!input.query.trim()) throw new Error("search requires a query");
+          return search({
+            query: input.query,
+            principals: [caller.actor, ...(members ?? caller.conversation.audience)],
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          });
         },
         async list() {
           await currentCaller();
