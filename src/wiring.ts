@@ -1761,7 +1761,6 @@ export function buildApp(
       return createE2bDeployProvider({
         client: e2bClient("apps"),
         ...(e2b.namePrefix ? { namePrefix: e2b.namePrefix } : {}),
-        idleTimeoutSec: E2B_DEPLOY_IDLE_TIMEOUT_SEC,
         advisoryLock,
         store: artifactMap<StoredE2bDeployBody>("e2b_deploy_bodies"),
         onError: sandboxOnError,

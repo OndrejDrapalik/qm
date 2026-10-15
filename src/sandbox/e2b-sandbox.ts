@@ -62,8 +62,6 @@ const HOME_TAR = `${HOME_DIR}/.qm-home.tar`;
 
 const SNAPSHOT_PRUNE = HOME_SNAPSHOT_PRUNE;
 const DEFAULT_KEEP_WARM_SEC = 3600;
-/** How long a cached session may sit idle before it is checked against E2B, which may have paused its sandbox. */
-const STALE_SESSION_MS = 30_000;
 const DEFAULT_NATIVE_SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 
 export interface StoredE2bSandbox {
@@ -78,8 +76,11 @@ export interface StoredE2bSandbox {
   homeDirty?: boolean;
 }
 
-/** Tools the QM E2B template (`deploy/e2b/e2b.Dockerfile`) adds over E2B's stock image. */
-export const E2B_TEMPLATE_TOOLS = ["gh", "aws", "x-api"];
+/**
+ * Tools the QM E2B template (`deploy/e2b/e2b.Dockerfile`) adds over E2B's stock image. Listed whenever
+ * `E2B_TEMPLATE_ID` is set, which assumes it names a build of that template.
+ */
+export const E2B_TEMPLATE_TOOLS = ["wget", "unzip", "gh", "aws", "x-api"];
 
 export interface E2bSandboxOptions extends BlobStagingOptions {
   advisoryLock?: AdvisoryLock;
@@ -120,7 +121,6 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     localQueue(scope, () => advisoryLock.withLock(`e2b-provision:${scope}`, action));
 
   const sessionByName = new Map<string, E2bSession>();
-  const lastUsedByName = new Map<string, number>();
   const scopeByName = new Map<string, string>();
   const scratchKeyByName = new Map<string, string>();
   const activeScratch = new Map<string, number>();
@@ -150,26 +150,21 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
   const hydrateHome = (scope: string, session: E2bSession): Promise<boolean> =>
     homeSnapshots.hydrateHome(scope, session);
 
-  /**
-   * The cached session for `name`, unless it sat idle long enough that E2B or another core may have paused its
-   * sandbox since. A command on such a session is lost rather than resumed, so it is dropped and reconnected.
-   */
-  async function liveCachedSession(name: string): Promise<E2bSession | undefined> {
-    const cached = sessionByName.get(name);
-    if (!cached) return undefined;
-    if (Date.now() - (lastUsedByName.get(name) ?? 0) < STALE_SESSION_MS) return cached;
-    if (client.info) {
-      try {
-        if ((await client.info(cached.sandboxId)).state === "running") {
-          lastUsedByName.set(name, Date.now());
-          return cached;
-        }
-      } catch (err) {
-        if (!(err instanceof E2bSandboxGoneError)) throw err;
-      }
+  /** Connects to the scope's stored sandbox, resuming it if paused; undefined when E2B no longer has it. */
+  async function connectStored(scope: string, sandboxId: string): Promise<E2bSession | undefined> {
+    try {
+      const session = await client.connect(sandboxId);
+      const info = await client.info?.(session.sandboxId);
+      noteInfo(info);
+      await store.merge(scope, {
+        preservationState: "running",
+        ...(info ? { nativePause: info.onTimeout === "pause" } : {}),
+      });
+      return session;
+    } catch (err) {
+      if (!(err instanceof E2bSandboxGoneError)) throw err;
+      return undefined;
     }
-    sessionByName.delete(name);
-    return undefined;
   }
 
   async function ensureSession(
@@ -178,29 +173,18 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     onStatus?: (text: string) => void,
   ): Promise<{ session: E2bSession; coldStart: boolean }> {
     return provisionQueue(scope, async () => {
-      const cached = await liveCachedSession(name);
+      const cached = sessionByName.get(name);
       if (cached) return { session: cached, coldStart: false };
 
       const adopt = (session: E2bSession): { session: E2bSession; coldStart: boolean } => {
         sessionByName.set(name, session);
-        lastUsedByName.set(name, Date.now());
         return { session, coldStart: false };
       };
 
       const stored = await store.get(scope);
       if (stored) {
-        try {
-          const session = await client.connect(stored.sandboxId);
-          const info = await client.info?.(session.sandboxId);
-          noteInfo(info);
-          await store.merge(scope, {
-            preservationState: "running",
-            ...(info ? { nativePause: info.onTimeout === "pause" } : {}),
-          });
-          return adopt(session);
-        } catch (err) {
-          if (!(err instanceof E2bSandboxGoneError)) throw err;
-        }
+        const session = await connectStored(scope, stored.sandboxId);
+        if (session) return adopt(session);
       }
 
       const listed = await client.list({ name });
@@ -259,7 +243,6 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
       }
       const session = await client.create({ metadata: { name }, autoPause: true });
       sessionByName.set(name, session);
-      lastUsedByName.set(name, Date.now());
       await store.put(scope, {
         sandboxId: session.sandboxId,
         createdAtMs: Date.now(),
@@ -311,9 +294,7 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
         ? { session: sessionByName.get(name) ?? (await reviveScratch()) }
         : await ensureSession(scopeByName.get(name) ?? "default", name);
     try {
-      const result = await action(first.session);
-      lastUsedByName.set(name, Date.now());
-      return result;
+      return await action(first.session);
     } catch (err) {
       if (err instanceof E2bCommandLostError) sessionByName.delete(name);
       if (!(err instanceof E2bSandboxGoneError)) throw err;
@@ -541,10 +522,17 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     exportFiles: execExport.exportFiles,
 
     async wake(scopeId: string): Promise<void> {
-      if (!(await store.get(scopeId))) return;
       const name = sandboxScopeName(prefix, scopeId);
-      scopeByName.set(name, scopeId);
-      await ensureSession(scopeId, name);
+      await provisionQueue(scopeId, async () => {
+        const stored = await store.get(scopeId);
+        if (!stored) return;
+        // Connecting resumes a paused sandbox and replaces any session cached from before the pause, which would
+        // lose its next command. A gone sandbox is left for the next turn to restore or replace.
+        const session = await connectStored(scopeId, stored.sandboxId);
+        if (!session) return;
+        sessionByName.set(name, session);
+        scopeByName.set(name, scopeId);
+      });
     },
 
     async persistHomeSnapshot(scopeId: string): Promise<void> {
