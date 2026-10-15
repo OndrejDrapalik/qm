@@ -115,8 +115,10 @@ import {
   type SubagentMailRef,
   type ToolActivity,
   type TurnOptions,
+  type TurnRuntime,
   type WorkBlock,
   fileContentUrl,
+  switchedDefault,
 } from "./core-bridge";
 import {
   buildTimeline,
@@ -149,6 +151,7 @@ import {
 } from "./model-options";
 import {
   attachmentGallery,
+  avatarTpl,
   browserRenderableImage,
   chipBadge,
   copyText,
@@ -188,7 +191,7 @@ import {
   watchActivityLabel,
 } from "./session-list";
 import { liveTurnThreadRef } from "./working-dot";
-import { goalElapsedLabel, goalObjectiveLabel, goalWorkedLabel, latestGoal, type GoalStripState } from "./goal-strip";
+import { goalElapsedLabel, goalObjectiveLabel, goalWorkedLabel, type GoalStripState } from "./goal-strip";
 import {
   ackKey,
   peekLines,
@@ -291,6 +294,8 @@ export function createChatSurface(
     rememberedScopeId: null as string | null,
     rememberedContextName: null as string | null,
     liveWork: null as WorkBlock | null,
+    goal: null as GoalStripState | null,
+    turnRuntime: null as TurnRuntime | null,
     pendingSend: null as string | null,
     normalStreamFn: null as Agent["streamFn"] | null,
     onWork: null as ((work: WorkBlock) => void) | null,
@@ -354,6 +359,21 @@ export function createChatSurface(
     if (!chatState.labelSpeakers) return undefined;
     const speaker = (message as { speaker?: string }).speaker;
     return typeof speaker === "string" && speaker.trim() ? speaker.trim() : undefined;
+  }
+
+  function speakerMember(message: AgentMessage): { principalId: string; avatarUrl?: string } | undefined {
+    const speakerId = (message as { speakerId?: string }).speakerId;
+    if (!speakerId) return undefined;
+    const project = contextsState.list.find((c) => c.scopeId === chatState.scopeId)?.project;
+    return project?.members.find((m) => m.principalId === speakerId);
+  }
+
+  function speakerLabelTpl(speaker: string | undefined, message: AgentMessage): TemplateResult | typeof nothing {
+    if (!speaker) return nothing;
+    const member = speakerMember(message);
+    return html`<div class="speaker-label">
+      ${avatarTpl({ key: member?.principalId ?? speaker, name: speaker, avatarUrl: member?.avatarUrl })}${speaker}
+    </div>`;
   }
   let transcriptRefreshGeneration = 0;
   const forkOriginController = createForkOriginController({
@@ -531,6 +551,8 @@ export function createChatSurface(
     chatState.earlierCount = 0;
     chatState.loadingEarlier = false;
     chatState.pins = [];
+    chatState.goal = null;
+    chatState.turnRuntime = null;
     chatState.host = document.createElement("div");
     chatState.host.className = "custom-chat";
 
@@ -670,14 +692,19 @@ export function createChatSurface(
   function currentTurnOptions(): TurnOptions {
     const selected = ctx.composer.currentModelOption();
     if (!selected) throw new Error("No model is available");
+    const target = { scopeId: chatState.scopeId, channelName: chatState.contextName };
+    if (ctx.composer.followsDefault()) return target;
     const harness = selected.harnessId;
     return {
       ...(harnessSupportsEffort(harness) ? { effortLevel: ctx.composer.state.effortLevel } : {}),
       ...(harnessSupportsFastMode(harness) ? { fastMode: ctx.composer.state.fastMode } : {}),
       harness,
-      scopeId: chatState.scopeId,
-      channelName: chatState.contextName,
+      ...target,
     };
+  }
+
+  function turnRuntime(): TurnRuntime | null {
+    return chatState.turnRuntime;
   }
 
   function inheritedHeader(): TemplateResult | typeof nothing {
@@ -874,6 +901,8 @@ export function createChatSurface(
       if (last?.stopReason === "error" && !hasRecordedRunReply(page.entries ?? [], last.interruptedRunId!))
         return drawActiveChat(agent);
       chatState.pins = page.pins ?? [];
+      chatState.goal = page.goal ?? null;
+      if (page.runtime) chatState.turnRuntime = page.runtime;
       const split = inheritedTranscript(chatState.forkSession ?? {}, page.entries ?? []);
       const messages = entriesToMessages(split.current, transcriptModel());
       const refreshedInherited = inheritedRefreshEntries(
@@ -898,6 +927,15 @@ export function createChatSurface(
     return (work: WorkBlock) => {
       if (agent !== chatState.agent) return;
       appendConsumedSteers(agent.state.messages, work);
+      if (
+        work.runtime &&
+        switchedDefault(work.runtime) &&
+        (work.runtime.harnessId !== chatState.turnRuntime?.harnessId ||
+          work.runtime.modelId !== chatState.turnRuntime.modelId)
+      )
+        void ctx.composer.followScopeDefault(agent);
+      if (work.runtime) chatState.turnRuntime = work.runtime;
+      else if (work !== chatState.liveWork) chatState.turnRuntime = null;
       chatState.liveWork = work;
       syncWorkTicker();
       scheduleStreamDraw(agent);
@@ -1102,6 +1140,8 @@ export function createChatSurface(
     if (!sameSession) {
       chatState.inheritedExpanded = false;
       chatState.pins = [];
+      chatState.goal = null;
+      chatState.turnRuntime = null;
     }
     syncLocation();
 
@@ -1292,6 +1332,16 @@ export function createChatSurface(
         </div>
       </article>
     `;
+  }
+
+  function setTurnRuntime(runtime: TurnRuntime | null): void {
+    chatState.turnRuntime = runtime;
+    if (chatState.agent) drawActiveChat(chatState.agent);
+  }
+
+  function setGoal(goal: GoalStripState | null): void {
+    chatState.goal = goal;
+    if (chatState.agent) drawActiveChat(chatState.agent);
   }
 
   function setPins(pins: SessionPin[]): void {
@@ -1706,7 +1756,8 @@ export function createChatSurface(
     if (!cacheable) return chatMessage(message, index, isStreaming);
     const forkable = Boolean(chatState.threadRef && chatState.sessionId && chatState.agent);
     const forking = pendingFork !== null;
-    const speakerLabel = speakerLabelFor(message);
+    const speaker = speakerLabelFor(message);
+    const speakerLabel = speaker && `${speaker}\n${speakerMember(message)?.avatarUrl ?? ""}`;
     const edited = Boolean((message as { edited?: boolean }).edited);
     const deleted = Boolean((message as { deleted?: boolean }).deleted);
     const day = new Date().toDateString();
@@ -1790,7 +1841,7 @@ export function createChatSurface(
           text: `${messageText(message)}${edited || deleted ? ` (${deleted ? "deleted" : "edited"})` : ""}`,
           index,
           entrySeqs: messageEntrySeqs(message).join(" "),
-          before: html`${speaker ? html`<div class="speaker-label">${speaker}</div>` : nothing}${attachmentGallery(attachments, (attachment) => browserRenderableImage(attachment.mimeType), userAttachmentBadge)}`,
+          before: html`${speakerLabelTpl(speaker, message)}${attachmentGallery(attachments, (attachment) => browserRenderableImage(attachment.mimeType), userAttachmentBadge)}`,
           after: sendFailure
             ? html`<div class="send-failure">
                 <span>${sendFailure}</span
@@ -1807,7 +1858,7 @@ export function createChatSurface(
           data-index=${index}
           data-entry-seqs=${messageEntrySeqs(message).join(" ")}
         >
-          ${speaker ? html`<div class="speaker-label">${speaker}</div>` : nothing}
+          ${speakerLabelTpl(speaker, message)}
           ${attachmentGallery(attachments, (attachment) => browserRenderableImage(attachment.mimeType), userAttachmentBadge)}
           <div
             class="message-bubble user-bubble ${deleted ? "deleted-bubble" : ""}"
@@ -2188,9 +2239,7 @@ export function createChatSurface(
   }
 
   function syncWorkTicker(): void {
-    const goalTicking = Boolean(
-      chatState.agent?.state.isStreaming && latestGoal(visibleMessages(chatState.agent))?.status === "active",
-    );
+    const goalTicking = Boolean(chatState.agent?.state.isStreaming && currentGoal()?.status === "active");
     const active =
       (chatState.liveWork?.status === "working" && !chatState.liveWork.stale) || goalTicking || subagentUi.ticking;
     if (active && !workTicker) {
@@ -2201,7 +2250,12 @@ export function createChatSurface(
     }
   }
 
+  function currentGoal(): GoalStripState | null {
+    return chatState.liveWork?.goal ?? chatState.goal;
+  }
+
   function clearLiveWork(): void {
+    if (chatState.liveWork?.goal) chatState.goal = chatState.liveWork.goal;
     chatState.liveWork = null;
     chatState.pendingSend = null;
     syncWorkTicker();
@@ -2689,7 +2743,7 @@ export function createChatSurface(
 
   function goalStrip(agent: Agent): TemplateResult | typeof nothing {
     const messages = visibleMessages(agent);
-    const goal = latestGoal(messages);
+    const goal = currentGoal();
     if (!goal) return nothing;
     const cancel = goalCancels.get(`${chatState.sessionId}:${goal.createdAt}`);
     if (cancel === "done") return nothing;
@@ -3449,6 +3503,7 @@ export function createChatSurface(
     stopLiveRun,
     isStopping: () => runSlot.stopGeneration === runSlot.generation,
     currentTurnOptions,
+    turnRuntime,
     newChat,
     teardown: teardownActiveChat,
     resetChatState,
@@ -3476,6 +3531,8 @@ export function createChatSurface(
     drawActiveChat,
     setTranscriptWindow,
     setPins,
+    setGoal,
+    setTurnRuntime,
     requestBackgroundPanel,
     activePendingApprovals,
     hasUnresolvedApproval,

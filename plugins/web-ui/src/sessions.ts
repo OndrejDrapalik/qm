@@ -1858,5 +1858,7 @@ export async function openSessionInto(
     conv.mountReadOnly(s, messages, earlier, anchorSeq, inheritedMessages);
   }
   conv.setPins(entriesRes.pins ?? []);
+  conv.setGoal(entriesRes.goal ?? null);
+  conv.setTurnRuntime(entriesRes.runtime ?? null);
   renderList();
 }
