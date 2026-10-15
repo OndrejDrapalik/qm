@@ -1,4 +1,5 @@
 import { EXTERNAL_APP_SHARING_OFF, externalAppSharingAllowed } from "../../feature-flags.ts";
+import { PUBLIC_LINKS_UNAVAILABLE } from "../../deploy/deploy-service.ts";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -1609,12 +1610,6 @@ export async function shareDeployment(ctx: ApiCtx): Promise<void> {
         error: "bad_request",
         message: "public access and person/scope access must be changed separately",
       });
-    if (b.public && !(ctx.deps.deployAppsDomain && ctx.deps.deployGateSecret))
-      return sendJson(res, 409, {
-        error: "public_links_unavailable",
-        message:
-          "This instance serves apps at /d/<app>/ on its own domain, which always requires sign-in, so a public link would still ask visitors to sign in. Public links need an apps domain: set DEPLOY_APPS_DOMAIN to a domain with a wildcard DNS record routed to the portal, and AWS_DEPLOY_GATE_SECRET.",
-      });
     try {
       const deployment = await app.setDeploymentPublic(params.id!, b.public, { createdBy: capability.actorId });
       return sendJson(res, 200, {
@@ -1636,6 +1631,9 @@ export async function shareDeployment(ctx: ApiCtx): Promise<void> {
       } else if (msg === EXTERNAL_APP_SHARING_OFF) {
         status = 403;
         error = "external_sharing_disabled";
+      } else if (msg === PUBLIC_LINKS_UNAVAILABLE) {
+        status = 409;
+        error = "public_links_unavailable";
       }
       return sendJson(res, status, { error, message: msg });
     }

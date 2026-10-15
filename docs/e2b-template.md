@@ -15,6 +15,9 @@ plan allows.
 Set `E2B_API_KEY` with `qm secrets set`. Pin a version tag, so a new release does not
 change the image of new scopes.
 
+With `E2B_TEMPLATE_ID` set, the agent computer's profile lists gh, aws and `x-api` as
+installed. Without it, core uses E2B's stock `base` image and lists them as missing.
+
 On E2B plans capped at one hour, also set `E2B_MAX_LIFETIME_SEC=3600` in `env.core`.
 Core otherwise asks for a 61 minute sandbox timeout, and those plans reject every create
 with `400: Timeout cannot be greater than 1 hours`. The setting also caps a command at 59

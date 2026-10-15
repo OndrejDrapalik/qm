@@ -908,28 +908,25 @@ test("two concurrent turns on one parking computer: only the last turn to finish
   assert.deepEqual((await resources.get(record.id)).holders, []);
 });
 
-test("sign-in warm-up creates one default computer on first sign-in, then only wakes it", async () => {
-  const { resources, records, provisioned } = fixture(undefined, []);
-  await Promise.all([resources.warmDefault("bob", "personal:bob"), resources.warmDefault("bob", "personal:bob")]);
-  const created = await resources.resolve("personal:bob");
-  assert.equal(created?.state, "ready");
-  assert.equal(created?.createdBy, "bob");
-  assert.equal((await records.entries()).length, 1);
+test("page-load wake only resumes an existing default computer and never provisions or creates one", async () => {
+  const woken: string[] = [];
+  const { resources, records, provisioned } = fixture((backend) => {
+    backend.wake = async (scopeId) => {
+      woken.push(scopeId);
+    };
+  }, []);
+  await resources.warmDefault("bob", "personal:bob");
+  assert.equal(await resources.resolve("personal:bob"), null, "no computer is created for a visitor without one");
+  assert.deepEqual(woken, []);
+  const created = await resources.create("bob", "personal:bob", "local", "Mine");
+  await resources.setDefault("bob", "personal:bob", created.id);
   const before = provisioned.length;
   await resources.warmDefault("bob", "personal:bob");
-  assert.equal(provisioned.length, before + 1);
-  assert.equal(provisioned.at(-1), created?.backingScopeId);
-  assert.equal((await records.entries()).length, 1);
-});
-
-test("sign-in warm-up respects a cleared default and never creates for other scopes", async () => {
-  const { resources, records, provisioned } = fixture(undefined, []);
-  await resources.warmDefault("bob", "personal:bob");
+  assert.deepEqual(woken, [created.backingScopeId]);
+  assert.equal(provisioned.length, before, "waking does not re-run provisioning");
   await resources.setDefault("bob", "personal:bob", null);
-  const before = provisioned.length;
   await resources.warmDefault("bob", "personal:bob");
-  assert.equal(provisioned.length, before);
-  assert.equal(await resources.resolve("personal:bob"), null);
+  assert.equal(woken.length, 1, "a cleared default is left alone");
   await assert.rejects(resources.warmDefault("bob", "personal:carol"), /permission to use its owning scope/);
   assert.equal((await records.entries()).length, 1);
 });

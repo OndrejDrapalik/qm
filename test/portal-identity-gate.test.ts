@@ -393,9 +393,9 @@ describe("user-scoped routes require a portal-verified actor when enforcement is
     assert.equal(claims?.actorId, "U1");
     assert.equal(claims?.scopeId, "personal:U1");
     assert.deepEqual(warmed, [], "API calls mint capabilities without waking the computer");
-    const pageLoad = await post("/v1/session-cap?warm=1", {}, { "x-portal-identity": await token("U1") });
-    assert.equal(pageLoad.status, 200);
-    assert.deepEqual(warmed, ["U1"], "a page load asks for the warm-up");
+    const pageLoad = await post("/v1/computer/wake", {}, { "x-portal-identity": await token("U1") });
+    assert.equal(pageLoad.status, 202);
+    assert.deepEqual(warmed, ["U1"], "a page load asks core to wake the computer");
   });
 });
 

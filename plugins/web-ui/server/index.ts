@@ -712,7 +712,13 @@ async function coreFetchCap(
 }
 
 function warmPersonalComputer(): void {
-  void coreFetch("POST", "/v1/session-cap?warm=1", "").catch(() => undefined);
+  void coreFetch("POST", "/v1/computer/wake", "").then(
+    (r) => {
+      if (r.status >= 400)
+        console.warn("%s", `[web-ui] computer wake: core answered ${r.status}: ${r.text.slice(0, 200)}`);
+    },
+    (err: unknown) => console.warn("%s", "[web-ui] computer wake failed:", String(err)),
+  );
 }
 
 async function relayCore(res: ServerResponse, method: HttpMethod, pathWithQuery: string, rawBody = ""): Promise<void> {

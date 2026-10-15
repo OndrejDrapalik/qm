@@ -3,14 +3,18 @@ import { LRUCache } from "lru-cache";
 import type { Deployment, DeploymentVersion } from "./deploy-store.ts";
 import type { DeployEndpoint, DeployProvider } from "./deploy-provider.ts";
 import {
-  APP_PID_PATH,
+  appEnv,
   appLaunch,
   appLogs,
   appReporter,
+  bundleEntries,
+  execFailure,
+  exportEnv,
+  extractBundle,
+  STOP_APP,
   waitAppReady,
   type AppErrorSink,
 } from "./shared-deploy-provider.ts";
-import { normalizeRelPath, readTree } from "./deploy-fs.ts";
 import { makeTar } from "../sandbox/tar.ts";
 import { E2bSandboxGoneError, type E2bClient, type E2bSession } from "../sandbox/e2b-client.ts";
 import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts";
@@ -31,7 +35,6 @@ const RESOLVE_CACHE_MS_DEFAULT = 15_000;
 const RESOLVE_CACHE_MAX = 500;
 const DEPLOY_TAG = "qm-deploy";
 const TRAFFIC_TOKEN_HEADER = "e2b-traffic-access-token";
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export interface StoredE2bDeployBody {
   deploymentId: string;
@@ -86,43 +89,27 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
   };
 
   async function unpackTree(session: E2bSession, guestDir: string, dir: string): Promise<void> {
-    const files = await readTree(dir, { tolerateMissing: true });
-    if (!files.length) return;
+    const entries = await bundleEntries(dir);
+    if (!entries.length) return;
     const tar = `${HOME_DIR}/.qm-bundle-${randomUUID()}.tar`;
-    await session.writeFileBytes(
-      tar,
-      await makeTar(files.map((f) => ({ path: normalizeRelPath(f.path), data: f.data }))),
-    );
-    const r = await exec(
-      session,
-      `mkdir -p ${shq(guestDir)} && tar -xmf ${shq(tar)} -C ${shq(guestDir)}; rc=$?; rm -f ${shq(tar)}; exit $rc`,
-      120,
-    );
-    if (r.code !== 0)
-      throw new Error(`e2b deploy: unpacking into ${guestDir} failed: ${(r.stderr || r.stdout).slice(0, 300)}`);
+    await session.writeFileBytes(tar, await makeTar(entries));
+    const r = await exec(session, extractBundle(tar, guestDir), 120);
+    if (r.code !== 0) throw execFailure(`e2b deploy: unpacking into ${guestDir}`, r);
   }
 
   async function install(d: Deployment, session: E2bSession, version: DeploymentVersion): Promise<void> {
-    const stop =
-      `pid=$(cat ${shq(APP_PID_PATH)} 2>/dev/null || true); ` +
-      `if [ -n "$pid" ]; then kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; ` +
-      `for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 0.3; done; ` +
-      `kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; fi; ` +
-      `rm -rf ${shq(APP_DIR)} ${shq(APP_PID_PATH)}; mkdir -p ${shq(APP_DIR)} ${shq(DATA_DIR)}`;
-    const stopped = await exec(session, stop, 60);
-    if (stopped.code !== 0)
-      throw new Error(`e2b deploy: stopping the previous version failed: ${stopped.stderr.slice(0, 300)}`);
+    const stopped = await exec(
+      session,
+      `${STOP_APP}; rm -rf ${shq(APP_DIR)}; mkdir -p ${shq(APP_DIR)} ${shq(DATA_DIR)}`,
+      60,
+    );
+    if (stopped.code !== 0) throw execFailure("e2b deploy: stopping the previous version", stopped);
     await unpackTree(session, APP_DIR, version.snapshotDir);
     if (version.homeDir) await unpackTree(session, HOME_DIR, version.homeDir);
-    const env: Array<[string, string]> = [
-      ...Object.entries(version.env ?? {}).filter(([k]) => ENV_NAME.test(k)),
-      ["HOME", HOME_DIR],
-      ["PORT", String(appPort)],
-      ["DATA_DIR", DATA_DIR],
-    ];
-    const inner = `${env.map(([k, v]) => `export ${k}=${shq(v)}`).join("; ")}; cd ${shq(APP_DIR)}; ${version.entrypoint}`;
+    const env = appEnv(version.env, { HOME: HOME_DIR, PORT: String(appPort), DATA_DIR });
+    const inner = `${exportEnv(env)}; cd ${shq(APP_DIR)}; ${version.entrypoint}`;
     const started = await exec(session, appLaunch(inner, appPort), 60);
-    if (started.code !== 0) throw new Error(`e2b deploy: app start failed: ${started.stderr.slice(0, 300)}`);
+    if (started.code !== 0) throw execFailure("e2b deploy: app start", started);
     await waitAppReady((script, timeoutSec) => exec(session, script, timeoutSec), {
       appPort,
       windowSec: readyWindowSec,

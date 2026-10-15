@@ -75,6 +75,9 @@ export interface StoredE2bSandbox {
   homeDirty?: boolean;
 }
 
+/** Tools the QM E2B template (`deploy/e2b/e2b.Dockerfile`) adds over E2B's stock image. */
+export const E2B_TEMPLATE_TOOLS = ["gh", "aws", "x-api"];
+
 export interface E2bSandboxOptions extends BlobStagingOptions {
   advisoryLock?: AdvisoryLock;
   client: E2bClient;
@@ -312,10 +315,10 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
       os: "Linux — E2B Firecracker sandbox (provider pause preserves state; publish durable work to git or Files)",
       runtimes: ["Node", "Python 3"],
       get tools() {
-        return visibleTools(["git", "curl", "jq", "tar", "python3", "gh", "aws", ...(opts.extraTools ?? [])]);
+        return visibleTools(["git", "curl", "jq", "tar", "python3", ...(opts.extraTools ?? [])]);
       },
       get notInstalled() {
-        return visibleNotInstalled(["gcloud", "kubectl", "flyctl", "glab"], opts.extraTools ?? []);
+        return visibleNotInstalled(["gh", "aws", "gcloud", "kubectl", "flyctl", "glab"], opts.extraTools ?? []);
       },
       get cpus() {
         return observed.cpus;
@@ -511,6 +514,14 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     },
 
     exportFiles: execExport.exportFiles,
+
+    async wake(scopeId: string): Promise<void> {
+      if (!(await store.get(scopeId))) return;
+      const name = sandboxScopeName(prefix, scopeId);
+      scopeByName.set(name, scopeId);
+      const r = await execRaw(name, "true", 30);
+      if (r.code !== 0) throw new Error(`e2b wake: exit ${r.code}: ${(r.stderr || r.stdout).trim().slice(-300)}`);
+    },
 
     async persistHomeSnapshot(scopeId: string): Promise<void> {
       const name = sandboxScopeName(prefix, scopeId);

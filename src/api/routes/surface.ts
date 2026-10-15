@@ -609,7 +609,7 @@ async function selfMemory(ctx: ApiCtx): Promise<void> {
 }
 
 async function sessionCapability(ctx: ApiCtx): Promise<void> {
-  const { res, deps, actor, url } = ctx;
+  const { res, deps, actor } = ctx;
   if (!actor) return sendJson(res, 401, { error: "unauthorized", message: "portal identity required" });
   const secret = deps.capabilitySecret ?? ctx.secret;
   if (!secret) return sendJson(res, 503, { error: "not_configured", message: "capability secret not set" });
@@ -618,8 +618,15 @@ async function sessionCapability(ctx: ApiCtx): Promise<void> {
     secret,
     deps.capabilityTokenCompression,
   );
-  if (url.searchParams.get("warm") === "1") deps.warmPersonalComputer?.(actor.p);
   return sendJson(res, 200, { token });
+}
+
+/** The web UI calls this when it serves the app shell, so a paused personal computer is running by the first turn. */
+async function wakePersonalComputer(ctx: ApiCtx): Promise<void> {
+  const { res, deps, actor } = ctx;
+  if (!actor) return sendJson(res, 401, { error: "unauthorized", message: "portal identity required" });
+  deps.warmPersonalComputer?.(actor.p);
+  return sendJson(res, 202, { ok: true });
 }
 
 async function listAgentApis(ctx: ApiCtx): Promise<void> {
@@ -1323,6 +1330,7 @@ export const surfaceRoutes: ReadonlyArray<Route<ApiCtx>> = [
   ...sessionSharingRoutes,
   ...suggestedActivityRoutes,
   { method: "POST", path: "/v1/session-cap", auth: "source", handle: sessionCapability },
+  { method: "POST", path: "/v1/computer/wake", auth: "source", handle: wakePersonalComputer },
   { method: "GET", path: "/v1/resources/search", auth: "source", handle: searchResources },
   { method: "GET", path: "/v1/sessions/search", auth: "source", handle: searchSessions },
   { method: "POST", path: "/v1/sessions/:id/title", auth: "source", handle: regenerateSessionTitle },

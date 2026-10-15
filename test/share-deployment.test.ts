@@ -36,6 +36,7 @@ type Dir = { resolve: (orgId: string, q: string) => Promise<RecipientResolution>
 function makeDeploy(
   canManageEmail?: (email: string) => Promise<boolean>,
   externalSharing = true,
+  publicLinksAvailable = true,
 ): { deploy: DeployService; acl: AclStore } {
   const acl: AclStore = createAclStore();
   const deploy = createDeployService({
@@ -49,6 +50,7 @@ function makeDeploy(
     acl,
     ...(canManageEmail ? { canManageEmail } : {}),
     externalSharingAllowed: async () => externalSharing,
+    publicLinksAvailable,
     deployDir: mkdtempSync(join(tmpdir(), "share-api-")),
   });
   return { deploy, acl };
@@ -73,10 +75,6 @@ function callShare(
   id: string,
   body: unknown,
   featureFlags = externalSharingOn,
-  appsGateway: { deployAppsDomain?: string; deployGateSecret?: string } = {
-    deployAppsDomain: "apps.example.com",
-    deployGateSecret: "gate",
-  },
 ) {
   const out: { status?: number; body?: any } = {};
   const res = {
@@ -91,7 +89,7 @@ function callShare(
   const ctx = {
     res,
     app,
-    deps: { featureFlags, ...appsGateway },
+    deps: { featureFlags },
     params: { id },
     body,
     capability,
@@ -577,8 +575,9 @@ test("deployment public access is explicit, owner-only, and reversible", async (
   assert.equal((await app.getDeployment("public-toggle"))?.public, undefined);
 });
 
-test("without an apps domain, a public link is refused instead of reported as open", async () => {
-  const { app } = apiHarness();
+test("without an apps domain, a public link is refused on the share route and the agent's apps tool", async () => {
+  const { deploy } = makeDeploy(undefined, true, false);
+  const app = createApp({ deploy, identity: createIdentityService() } as unknown as Parameters<typeof createApp>[0]);
   await app.deploy({
     ownerScopeId: scopeId("personal", "U1"),
     createdBy: "U1",
@@ -586,12 +585,15 @@ test("without an apps domain, a public link is refused instead of reported as op
     files: [],
     name: "path-only",
   });
-  const refused = await callShare(app, cap("U1"), "path-only", { public: true }, externalSharingOn, {});
+  const refused = await callShare(app, cap("U1"), "path-only", { public: true });
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error, "public_links_unavailable");
+  await assert.rejects(
+    () => toolCtx(deploy).setDeploymentPublic("path-only", true),
+    /Public links need an apps domain/,
+  );
   assert.equal((await app.getDeployment("path-only"))?.public, undefined);
-  const restricted = await callShare(app, cap("U1"), "path-only", { public: false }, externalSharingOn, {});
-  assert.equal(restricted.status, 200);
+  assert.equal((await callShare(app, cap("U1"), "path-only", { public: false })).status, 200);
 });
 
 test("with external app sharing off, public links and outside emails are refused while org sharing still works", async () => {

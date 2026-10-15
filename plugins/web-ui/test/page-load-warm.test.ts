@@ -9,7 +9,8 @@ const core = createServer((req: IncomingMessage, res) => {
   req.resume();
   req.on("end", () => {
     const u = req.url ?? "";
-    if (req.method === "POST" && u.startsWith("/v1/session-cap")) warmCalls.push(u);
+    const path = u.split("?")[0]!;
+    if (req.method === "POST" && path === "/v1/computer/wake") warmCalls.push(path);
     res.setHeader("content-type", "application/json");
     res.writeHead(200);
     res.end(JSON.stringify({ token: "cap" }));
@@ -37,7 +38,7 @@ const until = async (done: () => boolean): Promise<void> => {
   for (let i = 0; i < 50 && !done(); i++) await new Promise((r) => setTimeout(r, 20));
 };
 
-test("loading the web UI asks core to warm the user's computer; assets and API calls do not", async () => {
+test("loading the web UI asks core to wake the user's computer; assets and API calls do not", async () => {
   const headers = {
     [PORTAL_IDENTITY_HEADER]: mintPortalIdentity(
       { p: "alice", exp: Date.now() + 60_000 },
@@ -46,13 +47,8 @@ test("loading the web UI asks core to warm the user's computer; assets and API c
   };
   await (await fetch(`${base}/assets/missing.js`, { headers })).text();
   await (await fetch(`${base}/me`, { headers })).text();
-  assert.deepEqual(
-    warmCalls.filter((u) => u.includes("warm=1")),
-    [],
-  );
+  assert.deepEqual(warmCalls, []);
   await (await fetch(`${base}/`, { headers })).text();
-  await until(() => warmCalls.some((u) => u.includes("warm=1")));
-  const warms = warmCalls.filter((u) => u.includes("warm=1"));
-  assert.equal(warms.length, 1);
-  assert.ok(warms[0]!.startsWith("/v1/session-cap?warm=1"));
+  await until(() => warmCalls.length > 0);
+  assert.deepEqual(warmCalls, ["/v1/computer/wake"]);
 });

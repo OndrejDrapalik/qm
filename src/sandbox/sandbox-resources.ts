@@ -1,5 +1,5 @@
 import { withLiveTurnMembership } from "../resolution/scope-membership.ts";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DurableMap } from "../persistence/durable-map.ts";
 import type { AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { parseScopeId, type CommandPolicy, type EgressPolicy, type ScopeId } from "../types.ts";
@@ -325,25 +325,13 @@ export function createSandboxResources(opts: {
     },
     async warmDefault(actorId, scopeId) {
       await initialize();
-      const route = await opts.defaults.get(scopeId);
-      if (!route) {
-        const id = `default-${createHash("sha256").update(scopeId).digest("hex").slice(0, 32)}`;
-        if (await opts.records.get(id)) return;
-        const created = await resources.create(actorId, scopeId, opts.defaultBackend, "Default computer", id);
-        await resources.setDefault(actorId, scopeId, created.id);
-        return;
-      }
-      if (!route.sandboxId) return;
       await authorize(actorId, scopeId);
+      const route = await opts.defaults.get(scopeId);
+      if (!route?.sandboxId) return;
       const record = await get(route.sandboxId);
       const backend = opts.backends[record.backend];
-      if (record.state !== "ready" || !backend) return;
-      await use(record.id, async () => {
-        await backend.provision(
-          [{ scopeId: record.backingScopeId, mountPath: "/", mode: "rw" }],
-          await opts.provisionOptions?.(scopeId),
-        );
-      });
+      if (record.state !== "ready" || !backend?.wake) return;
+      await use(record.id, () => backend.wake!(record.backingScopeId));
     },
   };
   return resources;

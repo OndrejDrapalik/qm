@@ -154,6 +154,7 @@ const SYSTEM: Rule[] = [
   pat("POST", "/v1/background-work"),
   pat("POST", "/v1/deployment/live-session"),
   pat("POST", "/v1/session-cap"),
+  pat("POST", "/v1/computer/wake"),
   pat("POST", "/v1/keychain/drops/:id"),
   pat("POST", "/v1/keychain/asks"),
   pat("POST", "/v1/keychain/credentials"),

@@ -242,6 +242,8 @@ export interface Sandbox {
   writeStdin?(handle: SandboxHandle, processId: string, data: string): Promise<void>;
   signalProcess?(handle: SandboxHandle, processId: string, signal: string): Promise<void>;
   listProcesses?(handle: SandboxHandle): Promise<ProcessSession[]>;
+  /** Resumes the scope's existing computer if the substrate paused it, without provisioning or creating one. */
+  wake?(scopeId: string): Promise<void>;
   persistHomeSnapshot?(scopeId: string): Promise<void>;
   computerStatus?(scopeId: string): Promise<ComputerStatus>;
   restartComputer?(scopeId: string): Promise<void>;

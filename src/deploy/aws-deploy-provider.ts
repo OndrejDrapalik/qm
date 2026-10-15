@@ -11,12 +11,14 @@ import { createKeyedQueue, sleep } from "../util/async.ts";
 import { shq } from "../util/shell.ts";
 import { swallow } from "../util/errors.ts";
 import {
-  APP_PID_PATH,
+  appEnv,
   appGone,
   appLaunch,
   appLogs,
   appReporter,
+  exportEnv,
   listeningOn,
+  STOP_APP,
   waitAppReady,
   type AppErrorSink,
 } from "./shared-deploy-provider.ts";
@@ -452,16 +454,11 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
   }
 
   async function startApp(d: Deployment, id: string, endpoint: string, version: DeploymentVersion): Promise<void> {
-    const envExports = Object.entries(version.env ?? {})
-      .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
-      .map(([k, v]) => `export ${k}=${shq(v)}`)
-      .join("; ");
+    const envExports = exportEnv(appEnv(version.env));
     const inner = `cd ${shq(APP_DIR)}; ${version.entrypoint}`;
     const script = [
       listeningOn(appPort),
-      `old=$(cat ${shq(APP_PID_PATH)} 2>/dev/null || true)`,
-      `if [ -n "$old" ]; then kill -TERM "-$old" 2>/dev/null || true; sleep 0.5; kill -KILL "-$old" 2>/dev/null || true; fi`,
-      `rm -f ${shq(APP_PID_PATH)}`,
+      STOP_APP,
       `for i in $(seq 1 ${APP_PORT_RELEASE_TICKS}); do listening || break; sleep 0.25; done`,
       `listening && exit ${EXIT_APP_PORT_HELD}`,
       ...(s3 ? [`mkdir -p ${shq(DATA_DIR)}`] : []),

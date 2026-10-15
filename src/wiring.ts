@@ -1,3 +1,4 @@
+import { LRUCache } from "lru-cache";
 import type { MemoryEmbedder } from "./model/embeddings.ts";
 import { resolveEmbeddingModel } from "./model/pi-models.ts";
 import { createPostgresTeamStore, type TeamStore } from "./teams/teams.ts";
@@ -245,8 +246,8 @@ import {
   type StoredSuperserveSandbox,
 } from "./sandbox/superserve-sandbox.ts";
 import { createSdkSuperserveClient } from "./sandbox/superserve-client.ts";
-import { createE2bSandbox, type StoredE2bSandbox } from "./sandbox/e2b-sandbox.ts";
-import { createSdkE2bClient } from "./sandbox/e2b-client.ts";
+import { createE2bSandbox, E2B_TEMPLATE_TOOLS, type StoredE2bSandbox } from "./sandbox/e2b-sandbox.ts";
+import { createSdkE2bClient, type E2bClient } from "./sandbox/e2b-client.ts";
 import {
   createManagedAgentsSandbox,
   QM_TEMPLATE_TOOLS,
@@ -935,19 +936,27 @@ export function buildApp(
   const e2bBodies = artifactMap<StoredE2bSandbox>("e2b_sandbox_bodies");
   const modalBodies = artifactMap<StoredModalSandbox>("modal_sandbox_bodies");
   const awsBodies = artifactMap<StoredMicrovm>("aws_sandbox_bodies");
+  // One E2B client config for agent computers and published apps. Apps get their own idle
+  // timeout, and stay off the agent egress pin, since the client applies both to every sandbox.
+  const e2bClient = (use: "computers" | "apps"): E2bClient => {
+    const e2b = config.e2bSandbox;
+    if (!e2b.apiKey)
+      throw new Error(`${use === "apps" ? "DEPLOY_PROVIDER" : "SANDBOX_BACKEND"}=e2b requires E2B_API_KEY`);
+    const ttlSec = use === "apps" ? E2B_DEPLOY_IDLE_TIMEOUT_SEC : e2b.sandboxTtlSec;
+    return createSdkE2bClient({
+      apiKey: e2b.apiKey,
+      ...(e2b.templateId ? { templateId: e2b.templateId } : {}),
+      ...(ttlSec ? { sandboxTtlMs: ttlSec * 1000 } : {}),
+      ...(e2b.maxLifetimeSec ? { maxLifetimeMs: e2b.maxLifetimeSec * 1000 } : {}),
+      ...(e2b.proxy ? { proxy: e2b.proxy } : {}),
+      ...(use === "computers" && e2b.egressProxyUrl ? { egressProxyUrl: e2b.egressProxyUrl } : {}),
+    });
+  };
   const buildE2b = (): Sandbox => {
     const e2b = config.e2bSandbox;
-    if (!e2b.apiKey) throw new Error("SANDBOX_BACKEND=e2b requires E2B_API_KEY");
     return createE2bSandbox(workspace, {
       advisoryLock,
-      client: createSdkE2bClient({
-        apiKey: e2b.apiKey,
-        ...(e2b.templateId ? { templateId: e2b.templateId } : {}),
-        ...(e2b.sandboxTtlSec ? { sandboxTtlMs: e2b.sandboxTtlSec * 1000 } : {}),
-        ...(e2b.maxLifetimeSec ? { maxLifetimeMs: e2b.maxLifetimeSec * 1000 } : {}),
-        ...(e2b.proxy ? { proxy: e2b.proxy } : {}),
-        ...(e2b.egressProxyUrl ? { egressProxyUrl: e2b.egressProxyUrl } : {}),
-      }),
+      client: e2bClient("computers"),
       ...(e2b.namePrefix ? { namePrefix: e2b.namePrefix } : {}),
       ...(e2b.defaultTimeoutSec ? { defaultTimeoutSec: e2b.defaultTimeoutSec } : {}),
       keepWarmSec: Math.ceil(config.backgroundJobTtlMaxMs / 1000),
@@ -956,7 +965,7 @@ export function buildApp(
         ? { nativeSnapshotIntervalMs: e2b.nativeSnapshotIntervalSec * 1000 }
         : {}),
       ...(e2b.egressProxyUrl ? { egressProxyUrl: e2b.egressProxyUrl } : {}),
-      extraTools: deploymentLayer.advertisedTools,
+      extraTools: [...(e2b.templateId ? E2B_TEMPLATE_TOOLS : []), ...deploymentLayer.advertisedTools],
       credentialPaths: deploymentLayer.credentialPaths,
       layerToolFiles: () => deploymentLayer.installFiles,
       blobTransfer,
@@ -1749,15 +1758,8 @@ export function buildApp(
       }),
     e2b: () => {
       const e2b = config.e2bSandbox;
-      if (!e2b.apiKey) throw new Error("E2B_API_KEY not set (DEPLOY_PROVIDER=e2b)");
       return createE2bDeployProvider({
-        client: createSdkE2bClient({
-          apiKey: e2b.apiKey,
-          ...(e2b.templateId ? { templateId: e2b.templateId } : {}),
-          sandboxTtlMs: E2B_DEPLOY_IDLE_TIMEOUT_SEC * 1000,
-          ...(e2b.maxLifetimeSec ? { maxLifetimeMs: e2b.maxLifetimeSec * 1000 } : {}),
-          ...(e2b.proxy ? { proxy: e2b.proxy } : {}),
-        }),
+        client: e2bClient("apps"),
         ...(e2b.namePrefix ? { namePrefix: e2b.namePrefix } : {}),
         idleTimeoutSec: E2B_DEPLOY_IDLE_TIMEOUT_SEC,
         advisoryLock,
@@ -1820,6 +1822,7 @@ export function buildApp(
   const deployService = createDeployService({
     deliveries,
     deployAppsDomain: config.awsDeploy.appsDomain,
+    publicLinksAvailable: !!(config.awsDeploy.appsDomain && config.awsDeploy.gateSecret),
     publicWebUrl: config.publicWebUrl,
     appPublished: productAnalytics.appPublished,
     deployStore,
@@ -3023,13 +3026,11 @@ export function buildApp(
 const PERSONAL_WARM_INTERVAL_MS = 30_000;
 
 function personalComputerWarmer(resources: SandboxResources): (actorId: string) => void {
-  const warmedAt = new Map<string, number>();
+  const recent = new LRUCache<string, true>({ max: 10_000, ttl: PERSONAL_WARM_INTERVAL_MS });
   return (actorId) => {
-    const now = Date.now();
-    if (now - (warmedAt.get(actorId) ?? 0) < PERSONAL_WARM_INTERVAL_MS) return;
-    warmedAt.set(actorId, now);
-    for (const [id, at] of warmedAt) if (now - at >= PERSONAL_WARM_INTERVAL_MS) warmedAt.delete(id);
-    void resources.warmDefault(actorId, personalScope(actorId)).catch(swallowAs("sandbox: sign-in warm-up", undefined));
+    if (recent.has(actorId)) return;
+    recent.set(actorId, true);
+    void resources.warmDefault(actorId, personalScope(actorId)).catch(swallowAs("sandbox: page-load wake", undefined));
   };
 }
 

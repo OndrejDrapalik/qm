@@ -14,10 +14,15 @@ What the PR adds
 - `"sandbox.backend": "e2b"` in the CLI, wired like agent37: type, allowlist on docker, fly and aws, validation message, forwarding `SANDBOX_BACKEND` to core, and the stray Fly settings check. One test, modeled on the agent37 one. The CLI suite passes on Node 24 (624/624).
 - `docs/e2b-template.md` now starts with `qm-sandbox:v1.0.0` and the one-hour plan setting.
 
-What it does not do
+Backend and default changes
 
-- No backend code and no default changes.
-- The E2B profile still lists gh and aws as not installed, which is wrong for `qm-sandbox`. A deployment layer that advertises them takes them off the list.
+Live use of E2B as the only cloud showed gaps the CLI change alone leaves. Each change and why:
+
+- `DEPLOY_PROVIDER=e2b`: published apps run in their own E2B sandbox, paused when idle and resumed by the next request, so an E2B-only deployment needs no second cloud for apps. It reuses `E2B_API_KEY` and `E2B_TEMPLATE_ID` and the shared app launcher.
+- Page-load wake: when the web UI serves the app shell it calls `POST /v1/computer/wake`, which resumes the user's existing default computer, at most once per user every 30 seconds and only with `EAGER_PROVISION` on (the default). A paused computer otherwise costs the first turn a resume. It never creates or provisions a computer.
+- Default model for OpenAI-only deployments: `gpt-5.6-sol` to `gpt-6.1-sol`. In fresh sessions 5.6 Sol declined to run commands 8 times in 14; 6.1 Sol ran them 12 times in 12.
+- Making an app public is refused (409) unless an apps domain and gate secret are set, on both the share route and the agent's apps tool. Before, it reported "anyone with the link" while signed-out visitors still got 401. `e2b.app` joins the shared domains refused as an apps domain.
+- The E2B profile lists gh, aws and x-api as installed only when `E2B_TEMPLATE_ID` is set, since E2B's stock image has none of them. The template now copies in `x-api`.
 
 One thing operators hit: core asks E2B for a 61 minute timeout, so plans capped at one hour reject every create. `E2B_MAX_LIFETIME_SEC=3600` fixes it, and the docs say so.
 
