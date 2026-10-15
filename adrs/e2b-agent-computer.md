@@ -19,8 +19,8 @@ Backend and default changes
 Live use of E2B as the only cloud showed gaps the CLI change alone leaves. Each change and why:
 
 - `DEPLOY_PROVIDER=e2b`: published apps run in their own E2B sandbox, paused when idle and resumed by the next request, so an E2B-only deployment needs no second cloud for apps. It reuses `E2B_API_KEY` and `E2B_TEMPLATE_ID` and the shared app launcher.
-- Page-load wake: when the web UI serves the app shell it calls `POST /v1/computer/wake`, which resumes the user's existing default computer, at most once per user every 30 seconds and only with `EAGER_PROVISION` on (the default). A paused computer otherwise costs the first turn a resume. It never creates or provisions a computer.
-- Default model for OpenAI-only deployments: `gpt-5.6-sol` to `gpt-6.1-sol`. In fresh sessions 5.6 Sol declined to run commands 8 times in 14; 6.1 Sol ran them 12 times in 12.
+- Page-load wake: when the web UI serves the app shell it calls `POST /v1/computer/wake`, which resumes the user's existing default computer, at most once per user every 30 seconds and only with `EAGER_PROVISION` on (the default). A paused computer otherwise costs the first turn a resume. It never creates or provisions a computer. Only E2B implements the optional `Sandbox.wake`; other backends do nothing.
+- Default model for ChatGPT subscription logins (a company login on pi, or a personal OpenAI login): `gpt-5.6-sol` to `gpt-6.1-sol`. In fresh sessions 5.6 Sol declined to run commands 8 times in 14; 6.1 Sol ran them 12 times in 12.
 - Making an app public is refused (409) unless an apps domain and gate secret are set, on both the share route and the agent's apps tool. Before, it reported "anyone with the link" while signed-out visitors still got 401. `e2b.app` joins the shared domains refused as an apps domain.
 - The E2B profile lists gh, aws and x-api as installed only when `E2B_TEMPLATE_ID` is set, since E2B's stock image has none of them. The template now copies in `x-api`.
 
