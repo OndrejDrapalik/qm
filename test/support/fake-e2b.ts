@@ -232,6 +232,7 @@ export function installFakeE2b(fakeOpts: { info?: boolean } = {}): FakeE2b {
       const r = records.get(sandboxId);
       if (!r || r.expired) throw new E2bSandboxGoneError(sandboxId, "sandbox was not found");
       r.state = "running";
+      r.loseNextCommand = false; // only a session from before the pause loses its command
       return session(r);
     },
     async list(metadata): Promise<Array<{ sandboxId: string; state: string; metadata?: Record<string, string> }>> {

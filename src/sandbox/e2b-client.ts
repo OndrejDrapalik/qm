@@ -1,3 +1,6 @@
+import type { ExecResult } from "./sandbox.ts";
+import { shq } from "../util/shell.ts";
+
 export interface E2bCommandResult {
   stdout: string;
   stderr: string;
@@ -117,6 +120,14 @@ const DEFAULT_TTL_MS = 15 * 60_000;
 const DEFAULT_MAX_COMMAND_MS = 3600_000;
 const E2B_PRO_MAX_LIFETIME_MS = 24 * 3600_000;
 export const E2B_EXEC_MARGIN_MS = 60_000;
+
+/** Runs a shell script on the session under a guest-side `timeout`; exit 124 is reported as a timeout. */
+export async function runE2bScript(session: E2bSession, script: string, timeoutSec: number): Promise<ExecResult> {
+  const r = await session.runCommand(`timeout ${timeoutSec} sh -c ${shq(script)}`, {
+    timeoutMs: timeoutSec * 1000 + 30_000,
+  });
+  return { stdout: r.stdout, stderr: r.stderr, code: r.exitCode, timedOut: r.exitCode === 124 };
+}
 const ALL_TRAFFIC = "0.0.0.0/0";
 
 const HOSTNAME_MATCHED_PORTS: Record<string, string> = { "http:": "80", "https:": "443" };

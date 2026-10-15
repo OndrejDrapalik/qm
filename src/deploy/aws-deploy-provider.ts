@@ -9,7 +9,7 @@ import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts"
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue, sleep } from "../util/async.ts";
 import { shq } from "../util/shell.ts";
-import { swallow } from "../util/errors.ts";
+import { execFailure, swallow } from "../util/errors.ts";
 import {
   appEnv,
   appGone,
@@ -441,7 +441,7 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
       "git clean -ffd -e .qm-ready",
     ].join(" && ");
     const r = await execRaw(id, endpoint, script, 180);
-    if (r.code !== 0) throw new Error(`aws deploy git checkout failed: ${r.stderr.slice(0, 300)}`);
+    if (r.code !== 0) throw execFailure("aws deploy git checkout", r);
   }
 
   async function writeFiles(
@@ -474,7 +474,7 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
         `port ${appPort} is still held by a process this body cannot account for, so the new version was not started`,
       );
     }
-    if (r.code !== 0) throw new Error(`aws deploy app start failed: ${r.stderr.slice(0, 300)}`);
+    if (r.code !== 0) throw execFailure("aws deploy app start", r);
     await waitAppReady((script, timeoutSec) => execRaw(id, endpoint, script, timeoutSec), {
       appPort,
       windowSec: APP_READY_WINDOW_SEC,

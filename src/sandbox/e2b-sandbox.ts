@@ -34,6 +34,7 @@ import {
   type E2bClient,
   type E2bSandboxInfo,
   type E2bSession,
+  runE2bScript,
 } from "./e2b-client.ts";
 import {
   createHomeSnapshotOps,
@@ -61,6 +62,8 @@ const HOME_TAR = `${HOME_DIR}/.qm-home.tar`;
 
 const SNAPSHOT_PRUNE = HOME_SNAPSHOT_PRUNE;
 const DEFAULT_KEEP_WARM_SEC = 3600;
+/** How long a cached session may sit idle before it is checked against E2B, which may have paused its sandbox. */
+const STALE_SESSION_MS = 30_000;
 const DEFAULT_NATIVE_SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 
 export interface StoredE2bSandbox {
@@ -117,6 +120,7 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     localQueue(scope, () => advisoryLock.withLock(`e2b-provision:${scope}`, action));
 
   const sessionByName = new Map<string, E2bSession>();
+  const lastUsedByName = new Map<string, number>();
   const scopeByName = new Map<string, string>();
   const scratchKeyByName = new Map<string, string>();
   const activeScratch = new Map<string, number>();
@@ -146,17 +150,40 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
   const hydrateHome = (scope: string, session: E2bSession): Promise<boolean> =>
     homeSnapshots.hydrateHome(scope, session);
 
+  /**
+   * The cached session for `name`, unless it sat idle long enough that E2B or another core may have paused its
+   * sandbox since. A command on such a session is lost rather than resumed, so it is dropped and reconnected.
+   */
+  async function liveCachedSession(name: string): Promise<E2bSession | undefined> {
+    const cached = sessionByName.get(name);
+    if (!cached) return undefined;
+    if (Date.now() - (lastUsedByName.get(name) ?? 0) < STALE_SESSION_MS) return cached;
+    if (client.info) {
+      try {
+        if ((await client.info(cached.sandboxId)).state === "running") {
+          lastUsedByName.set(name, Date.now());
+          return cached;
+        }
+      } catch (err) {
+        if (!(err instanceof E2bSandboxGoneError)) throw err;
+      }
+    }
+    sessionByName.delete(name);
+    return undefined;
+  }
+
   async function ensureSession(
     scope: string,
     name: string,
     onStatus?: (text: string) => void,
   ): Promise<{ session: E2bSession; coldStart: boolean }> {
     return provisionQueue(scope, async () => {
-      const cached = sessionByName.get(name);
+      const cached = await liveCachedSession(name);
       if (cached) return { session: cached, coldStart: false };
 
       const adopt = (session: E2bSession): { session: E2bSession; coldStart: boolean } => {
         sessionByName.set(name, session);
+        lastUsedByName.set(name, Date.now());
         return { session, coldStart: false };
       };
 
@@ -232,6 +259,7 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
       }
       const session = await client.create({ metadata: { name }, autoPause: true });
       sessionByName.set(name, session);
+      lastUsedByName.set(name, Date.now());
       await store.put(scope, {
         sandboxId: session.sandboxId,
         createdAtMs: Date.now(),
@@ -283,7 +311,9 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
         ? { session: sessionByName.get(name) ?? (await reviveScratch()) }
         : await ensureSession(scopeByName.get(name) ?? "default", name);
     try {
-      return await action(first.session);
+      const result = await action(first.session);
+      lastUsedByName.set(name, Date.now());
+      return result;
     } catch (err) {
       if (err instanceof E2bCommandLostError) sessionByName.delete(name);
       if (!(err instanceof E2bSandboxGoneError)) throw err;
@@ -297,12 +327,7 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
   }
 
   async function execRaw(name: string, script: string, timeoutSec: number): Promise<ExecResult> {
-    return withSession(name, async (session) => {
-      const r = await session.runCommand(`timeout ${timeoutSec} sh -c ${shq(script)}`, {
-        timeoutMs: timeoutSec * 1000 + 30_000,
-      });
-      return { stdout: r.stdout, stderr: r.stderr, code: r.exitCode, timedOut: r.exitCode === 124 };
-    });
+    return withSession(name, (session) => runE2bScript(session, script, timeoutSec));
   }
 
   const profile: AgentComputerProfile = {
@@ -516,13 +541,9 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     exportFiles: execExport.exportFiles,
 
     async wake(scopeId: string): Promise<void> {
-      const stored = await store.get(scopeId);
-      if (!stored) return;
-      if (client.info && (await client.info(stored.sandboxId)).state === "running") return;
+      if (!(await store.get(scopeId))) return;
       const name = sandboxScopeName(prefix, scopeId);
       scopeByName.set(name, scopeId);
-      // A session cached from before E2B paused the sandbox loses its next command; reconnecting resumes it.
-      sessionByName.delete(name);
       await ensureSession(scopeId, name);
     },
 

@@ -157,7 +157,7 @@ export function createPorterDeployProvider(opts: PorterDeployProviderOptions): D
       appLaunch(inner, appPort),
     ].join("; ");
     const r = await execRaw(sandboxId, script, APP_START_EXEC_TIMEOUT_SEC);
-    if (r.code !== 0) throw new Error(`porter deploy app start failed: ${r.stderr.slice(0, 300)}`);
+    if (r.code !== 0) throw execFailure("porter deploy app start", r);
     await waitAppReady((script, timeoutSec) => execRaw(sandboxId, script, timeoutSec), {
       appPort,
       windowSec: readyWindowSec,

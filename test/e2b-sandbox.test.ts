@@ -179,15 +179,32 @@ test("exec on a paused sandbox auto-resumes", async () => {
   assert.equal(fake.current(h.id)?.state, "running");
 });
 
-test("wake resumes a paused computer by reconnecting, without running a command or creating one", async () => {
+test("wake resumes a paused computer by reconnecting, without running a command or creating one", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const native = make({ client: nativeClient() });
   await native.wake!(scope);
   assert.equal(fake.createdCount(scopeName()), 0, "no computer is created for a scope without one");
   const h = await native.provision(layers);
   fake.pause(h.id);
-  fake.loseNextCommand(h.id);
+  t.mock.timers.tick(31_000);
+  const before = fake.execScripts().length;
   await native.wake!(scope);
-  assert.equal(fake.current(h.id)?.state, "running", "reconnecting resumed the paused sandbox");
+  assert.equal(fake.current(h.id)?.state, "running");
+  assert.equal(fake.execScripts().length, before, "wake ran no command");
+  assert.equal(fake.createdCount(scopeName()), 1);
+});
+
+test("a command after E2B paused the computer behind an idle cached session reconnects instead of being lost", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const native = make({ client: nativeClient() });
+  const h = await native.provision(layers);
+  assert.equal((await native.run(h, "echo before")).stdout.trim(), "before");
+  fake.pause(h.id);
+  fake.loseNextCommand(h.id);
+  t.mock.timers.tick(31_000);
+  const r = await native.run(h, "echo after");
+  assert.equal(r.stdout.trim(), "after");
+  assert.equal(fake.current(h.id)?.state, "running");
   assert.equal(fake.createdCount(scopeName()), 1);
 });
 

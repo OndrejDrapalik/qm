@@ -1,5 +1,5 @@
 import { EXTERNAL_APP_SHARING_OFF, externalAppSharingAllowed } from "../../feature-flags.ts";
-import { PUBLIC_LINKS_UNAVAILABLE } from "../../deploy/deploy-service.ts";
+import { PublicLinksUnavailableError } from "../../deploy/deploy-service.ts";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -1631,7 +1631,7 @@ export async function shareDeployment(ctx: ApiCtx): Promise<void> {
       } else if (msg === EXTERNAL_APP_SHARING_OFF) {
         status = 403;
         error = "external_sharing_disabled";
-      } else if (msg === PUBLIC_LINKS_UNAVAILABLE) {
+      } else if (e instanceof PublicLinksUnavailableError) {
         status = 409;
         error = "public_links_unavailable";
       }

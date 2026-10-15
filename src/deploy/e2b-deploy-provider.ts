@@ -15,7 +15,7 @@ import {
   type AppErrorSink,
 } from "./shared-deploy-provider.ts";
 import { makeTar } from "../sandbox/tar.ts";
-import { E2bSandboxGoneError, type E2bClient, type E2bSession } from "../sandbox/e2b-client.ts";
+import { E2bSandboxGoneError, runE2bScript, type E2bClient, type E2bSession } from "../sandbox/e2b-client.ts";
 import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts";
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue } from "../util/async.ts";
@@ -80,24 +80,17 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
     ...(body.trafficAccessToken ? { proxyHeaders: { [TRAFFIC_TOKEN_HEADER]: body.trafficAccessToken } } : {}),
   });
 
-  const exec = async (session: E2bSession, script: string, timeoutSec: number) => {
-    const r = await session.runCommand(`timeout ${timeoutSec} sh -c ${shq(script)}`, {
-      timeoutMs: timeoutSec * 1000 + 30_000,
-    });
-    return { stdout: r.stdout, stderr: r.stderr, code: r.exitCode, timedOut: r.exitCode === 124 };
-  };
-
   async function unpackTree(session: E2bSession, guestDir: string, dir: string): Promise<void> {
     const entries = await bundleEntries(dir);
     if (!entries.length) return;
     const tar = `${HOME_DIR}/.qm-bundle-${randomUUID()}.tar`;
     await session.writeFileBytes(tar, await makeTar(entries));
-    const r = await exec(session, extractBundle(tar, guestDir), 120);
+    const r = await runE2bScript(session, extractBundle(tar, guestDir), 120);
     if (r.code !== 0) throw execFailure(`e2b deploy: unpacking into ${guestDir}`, r);
   }
 
   async function install(d: Deployment, session: E2bSession, version: DeploymentVersion): Promise<void> {
-    const stopped = await exec(
+    const stopped = await runE2bScript(
       session,
       `${STOP_APP}; rm -rf ${shq(APP_DIR)}; mkdir -p ${shq(APP_DIR)} ${shq(DATA_DIR)}`,
       60,
@@ -107,9 +100,9 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
     if (version.homeDir) await unpackTree(session, HOME_DIR, version.homeDir);
     const env = appEnv(version.env, { HOME: HOME_DIR, PORT: String(appPort), DATA_DIR });
     const inner = `${exportEnv(env)}; cd ${shq(APP_DIR)}; ${version.entrypoint}`;
-    const started = await exec(session, appLaunch(inner, appPort), 60);
+    const started = await runE2bScript(session, appLaunch(inner, appPort), 60);
     if (started.code !== 0) throw execFailure("e2b deploy: app start", started);
-    await waitAppReady((script, timeoutSec) => exec(session, script, timeoutSec), {
+    await waitAppReady((script, timeoutSec) => runE2bScript(session, script, timeoutSec), {
       appPort,
       windowSec: readyWindowSec,
       report: appReporter(opts.onError, d, version.env),
@@ -202,7 +195,7 @@ export function createE2bDeployProvider(opts: E2bDeployProviderOptions): DeployP
     async logs(d, logOpts): Promise<string | null> {
       const live = await connectStored(d);
       if (!live) return null;
-      return appLogs((script, timeoutSec) => exec(live.session, script, timeoutSec), logOpts.tailLines);
+      return appLogs((script, timeoutSec) => runE2bScript(live.session, script, timeoutSec), logOpts.tailLines);
     },
 
     destroy: (d) =>

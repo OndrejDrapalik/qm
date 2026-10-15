@@ -115,8 +115,16 @@ export interface DeploymentGrantee {
   permission: Permission;
 }
 
-export const PUBLIC_LINKS_UNAVAILABLE =
+const PUBLIC_LINKS_UNAVAILABLE =
   "This instance serves apps at /d/<app>/ on its own domain, which always requires sign-in, so a public link would still ask visitors to sign in. Public links need an apps domain: set DEPLOY_APPS_DOMAIN to a domain with a wildcard DNS record routed to the portal, and AWS_DEPLOY_GATE_SECRET.";
+
+/** Making an app public is refused: no apps domain can serve signed-out visitors. */
+export class PublicLinksUnavailableError extends Error {
+  constructor() {
+    super(PUBLIC_LINKS_UNAVAILABLE);
+    this.name = "PublicLinksUnavailableError";
+  }
+}
 
 export interface DeployServiceDeps {
   deliveries?: DeliveryStore;
@@ -538,7 +546,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
         throw new Error(`only the owner can change who can reach "${d.name ?? d.id}"`);
       }
       if (isPublic && !(await externalSharingAllowed(d.ownerScopeId))) throw new Error(EXTERNAL_APP_SHARING_OFF);
-      if (isPublic && deps.publicLinksAvailable === false) throw new Error(PUBLIC_LINKS_UNAVAILABLE);
+      if (isPublic && deps.publicLinksAvailable === false) throw new PublicLinksUnavailableError();
       await deps.deployStore.setPublic(d.id, isPublic);
       deps.auditLog.record({
         at: Date.now(),
