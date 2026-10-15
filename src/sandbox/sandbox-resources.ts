@@ -72,7 +72,6 @@ export interface SandboxResources {
   release(id: string, runId: string | undefined, isLive: (runId: string) => Promise<boolean>): Promise<boolean>;
   setDefault(actorId: string, scopeId: ScopeId, id: string | null): Promise<void>;
   resolve(scopeId: ScopeId): Promise<SandboxResource | null>;
-  warmDefault(actorId: string, scopeId: ScopeId): Promise<void>;
   get(id: string): Promise<SandboxResource>;
   defaultBackend(): SandboxBackendName;
 }
@@ -149,7 +148,7 @@ export function createSandboxResources(opts: {
         ...(backend.profile.spec ? { spec: backend.profile.spec } : {}),
         actions: actionsFor(backend),
       }));
-  const resources: SandboxResources = {
+  return {
     profiles,
     forTurn: (turn) =>
       createSandboxResources({
@@ -323,16 +322,5 @@ export function createSandboxResources(opts: {
         await opts.defaults.put(scopeId, { sandboxId: id });
       });
     },
-    async warmDefault(actorId, scopeId) {
-      await initialize();
-      await authorize(actorId, scopeId);
-      const route = await opts.defaults.get(scopeId);
-      if (!route?.sandboxId) return;
-      const record = await get(route.sandboxId);
-      const backend = opts.backends[record.backend];
-      if (record.state !== "ready" || !backend?.wake) return;
-      await use(record.id, () => backend.wake!(record.backingScopeId));
-    },
   };
-  return resources;
 }

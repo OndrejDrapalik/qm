@@ -1,4 +1,3 @@
-import { LRUCache } from "lru-cache";
 import type { MemoryEmbedder } from "./model/embeddings.ts";
 import { resolveEmbeddingModel } from "./model/pi-models.ts";
 import { createPostgresTeamStore, type TeamStore } from "./teams/teams.ts";
@@ -3022,17 +3021,6 @@ export function buildApp(
   };
 }
 
-const PERSONAL_WARM_INTERVAL_MS = 30_000;
-
-function personalComputerWarmer(resources: SandboxResources): (actorId: string) => void {
-  const recent = new LRUCache<string, true>({ max: 10_000, ttl: PERSONAL_WARM_INTERVAL_MS });
-  return (actorId) => {
-    if (recent.has(actorId)) return;
-    recent.set(actorId, true);
-    void resources.warmDefault(actorId, personalScope(actorId)).catch(swallowAs("sandbox: page-load wake", undefined));
-  };
-}
-
 export function serverDeps(
   config: Config,
   built: BuiltApp,
@@ -3175,6 +3163,5 @@ export function serverDeps(
     sessionShareBytes: built.sessionShareBytes,
     environments: built.environments,
     sandboxResources: built.sandboxResources,
-    ...(config.eagerProvisionEnabled ? { warmPersonalComputer: personalComputerWarmer(built.sandboxResources) } : {}),
   };
 }

@@ -169,7 +169,6 @@ export interface ServerDeps {
   egressEnforcement?: EgressEnforcement;
   egressControlPlaneConfigured?: boolean;
   sandboxResources?: SandboxResources;
-  warmPersonalComputer?: (actorId: string) => void;
   sandbox?: Sandbox;
   advisoryLock?: AdvisoryLock;
   processes?: ProcessRegistry;

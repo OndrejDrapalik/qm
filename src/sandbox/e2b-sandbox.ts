@@ -150,23 +150,6 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
   const hydrateHome = (scope: string, session: E2bSession): Promise<boolean> =>
     homeSnapshots.hydrateHome(scope, session);
 
-  /** Connects to the scope's stored sandbox, resuming it if paused; undefined when E2B no longer has it. */
-  async function connectStored(scope: string, sandboxId: string): Promise<E2bSession | undefined> {
-    try {
-      const session = await client.connect(sandboxId);
-      const info = await client.info?.(session.sandboxId);
-      noteInfo(info);
-      await store.merge(scope, {
-        preservationState: "running",
-        ...(info ? { nativePause: info.onTimeout === "pause" } : {}),
-      });
-      return session;
-    } catch (err) {
-      if (!(err instanceof E2bSandboxGoneError)) throw err;
-      return undefined;
-    }
-  }
-
   async function ensureSession(
     scope: string,
     name: string,
@@ -183,8 +166,18 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
 
       const stored = await store.get(scope);
       if (stored) {
-        const session = await connectStored(scope, stored.sandboxId);
-        if (session) return adopt(session);
+        try {
+          const session = await client.connect(stored.sandboxId);
+          const info = await client.info?.(session.sandboxId);
+          noteInfo(info);
+          await store.merge(scope, {
+            preservationState: "running",
+            ...(info ? { nativePause: info.onTimeout === "pause" } : {}),
+          });
+          return adopt(session);
+        } catch (err) {
+          if (!(err instanceof E2bSandboxGoneError)) throw err;
+        }
       }
 
       const listed = await client.list({ name });
@@ -520,20 +513,6 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
     },
 
     exportFiles: execExport.exportFiles,
-
-    async wake(scopeId: string): Promise<void> {
-      const name = sandboxScopeName(prefix, scopeId);
-      await provisionQueue(scopeId, async () => {
-        const stored = await store.get(scopeId);
-        if (!stored) return;
-        // Connecting resumes a paused sandbox and replaces any session cached from before the pause, which would
-        // lose its next command. A gone sandbox is left for the next turn to restore or replace.
-        const session = await connectStored(scopeId, stored.sandboxId);
-        if (!session) return;
-        sessionByName.set(name, session);
-        scopeByName.set(name, scopeId);
-      });
-    },
 
     async persistHomeSnapshot(scopeId: string): Promise<void> {
       const name = sandboxScopeName(prefix, scopeId);

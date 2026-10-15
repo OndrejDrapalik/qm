@@ -23,7 +23,6 @@ describe("user-scoped routes require a portal-verified actor when enforcement is
   let server: Server;
   let base: string;
   let built: BuiltApp;
-  const warmed: string[] = [];
 
   const token = async (p: string, secret = PID) => mintSignedPayload({ p, exp: Date.now() + 60_000 }, secret);
 
@@ -36,7 +35,6 @@ describe("user-scoped routes require a portal-verified actor when enforcement is
       scheduler: built.scheduler,
       identity: built.identity,
       sessionShares: built.sessionShares,
-      warmPersonalComputer: (actorId) => warmed.push(actorId),
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     base = `http://localhost:${(server.address() as AddressInfo).port}`;
@@ -392,10 +390,6 @@ describe("user-scoped routes require a portal-verified actor when enforcement is
     const claims = await verifyCapabilityToken(body.token as string, CAP);
     assert.equal(claims?.actorId, "U1");
     assert.equal(claims?.scopeId, "personal:U1");
-    assert.deepEqual(warmed, [], "API calls mint capabilities without waking the computer");
-    const pageLoad = await post("/v1/computer/wake", {}, { "x-portal-identity": await token("U1") });
-    assert.equal(pageLoad.status, 202);
-    assert.deepEqual(warmed, ["U1"], "a page load asks core to wake the computer");
   });
 });
 
