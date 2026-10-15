@@ -6,7 +6,7 @@ import type { DurableMap } from "../persistence/durable-map.ts";
 import { createMemoryMap } from "../persistence/durable-map.ts";
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue } from "../util/async.ts";
-import { swallowAs, errMessage } from "../util/errors.ts";
+import { swallowAs, errMessage, execFailure } from "../util/errors.ts";
 import { shq } from "../util/shell.ts";
 import { nonInteractiveShellPrefix, DROPPED_PROXY_ENV, forceThroughProxyEnv } from "./sandbox-env.ts";
 import { createExecProcessSessions, type ExecProcessIo } from "./exec-process-session.ts";
@@ -520,7 +520,7 @@ export function createE2bSandbox(workspace: WorkspaceStore, opts: E2bSandboxOpti
       const name = sandboxScopeName(prefix, scopeId);
       scopeByName.set(name, scopeId);
       const r = await execRaw(name, "true", 30);
-      if (r.code !== 0) throw new Error(`e2b wake: exit ${r.code}: ${(r.stderr || r.stdout).trim().slice(-300)}`);
+      if (r.code !== 0) throw execFailure("e2b wake", r);
     },
 
     async persistHomeSnapshot(scopeId: string): Promise<void> {

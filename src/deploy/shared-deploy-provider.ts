@@ -21,7 +21,6 @@ const APP_PID_PATH = "/tmp/qm-app.pid";
 const APP_LOG_PATH = "/tmp/qm-app.log";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const FAILURE_OUTPUT_CHARS = 300;
 
 /** A version's declared env, keeping only names a shell can export, with `platform` variables taking precedence. */
 export function appEnv(
@@ -51,15 +50,6 @@ export async function bundleEntries(dir: string): Promise<Array<{ path: string; 
 /** Unpacks an uploaded tar into `guestDir` and deletes it, exiting with tar's status. */
 export const extractBundle = (bundle: string, guestDir: string, cleanup = ""): string =>
   `mkdir -p ${shq(guestDir)} && tar -xmf ${shq(bundle)} -C ${shq(guestDir)}; rc=$?; rm -f ${shq(bundle)}; ${cleanup ? `${cleanup}; ` : ""}exit $rc`;
-
-/** An error for a failed guest command that keeps its exit status and the ends of both output streams. */
-export function execFailure(what: string, r: Pick<ExecResult, "stdout" | "stderr" | "code">): Error {
-  const tail = (s: string): string => s.trim().slice(-FAILURE_OUTPUT_CHARS);
-  const parts = [`${what} failed (exit ${r.code}${r.code === 124 ? ", timed out" : ""})`];
-  if (r.stderr.trim()) parts.push(`stderr: ${tail(r.stderr)}`);
-  if (r.stdout.trim()) parts.push(`stdout: ${tail(r.stdout)}`);
-  return new Error(parts.join("; "));
-}
 
 export type Exec = (script: string, timeoutSec: number) => Promise<Pick<ExecResult, "stdout" | "stderr" | "code">>;
 

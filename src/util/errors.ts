@@ -68,3 +68,14 @@ export async function withCleanup<T>(work: () => Promise<T>, cleanup: () => Prom
   await cleanup();
   return result;
 }
+
+const FAILURE_OUTPUT_CHARS = 300;
+
+/** An error for a failed guest command that keeps its exit status and the ends of both output streams. */
+export function execFailure(what: string, r: { stdout: string; stderr: string; code: number }): Error {
+  const tail = (out: string): string => out.trim().slice(-FAILURE_OUTPUT_CHARS);
+  const parts = [`${what} failed (exit ${r.code}${r.code === 124 ? ", timed out" : ""})`];
+  if (r.stderr.trim()) parts.push(`stderr: ${tail(r.stderr)}`);
+  if (r.stdout.trim()) parts.push(`stdout: ${tail(r.stdout)}`);
+  return new Error(parts.join("; "));
+}

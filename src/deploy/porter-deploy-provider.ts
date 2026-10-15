@@ -10,7 +10,6 @@ import {
   appLogs,
   appReporter,
   bundleEntries,
-  execFailure,
   extractBundle,
   waitAppReady,
   type AppErrorSink,
@@ -33,7 +32,7 @@ import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts"
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue } from "../util/async.ts";
 import { shq } from "../util/shell.ts";
-import { errMessage, swallow, swallowAs } from "../util/errors.ts";
+import { errMessage, execFailure, swallow, swallowAs } from "../util/errors.ts";
 
 const APP_DIR = "/app";
 const HOME_DIR = "/root";

@@ -8,7 +8,6 @@ import {
   appLogs,
   appReporter,
   bundleEntries,
-  execFailure,
   exportEnv,
   extractBundle,
   STOP_APP,
@@ -21,7 +20,7 @@ import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts"
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue } from "../util/async.ts";
 import { shq } from "../util/shell.ts";
-import { swallow } from "../util/errors.ts";
+import { execFailure, swallow } from "../util/errors.ts";
 
 const HOME_DIR = "/home/user";
 const APP_DIR = `${HOME_DIR}/app`;
