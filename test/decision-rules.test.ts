@@ -51,6 +51,11 @@ const fixed = (p: Record<string, number> | Error, calls: string[][] = []): Decis
   },
 });
 
+test("decision questions can exceed 500 characters", () => {
+  const question = "A detailed classification criterion. ".repeat(30);
+  assert.deepEqual(parse({ ...route(), question }), { rule: { ...route(), question } });
+});
+
 test("parseDecisionRule validates hooks, options, actions, onError, provider and model catalog", () => {
   assert.match(err(parse(injection())), /tool_response is not available yet/);
   assert.deepEqual(parse(route()), { rule: route() });
@@ -335,7 +340,7 @@ test("most_confident hook points follow the likeliest enforced verdict and error
   assert.equal(failing.decisive?.action, "continue", "a failed classifier falls back to its onError option");
 });
 
-test("the decisions resource checks the model catalog and marks agent writes", async () => {
+test("the decisions resource checks the model catalog and lets an admin's agent enforce", async () => {
   const { ADMIN_RESOURCE_BY_ID } = await import("../src/api/routes/admin-resources.ts");
   const { selectableBaseModels } = await import("../src/model/pi-models.ts");
   const saved: DecisionRule[] = [];
@@ -344,7 +349,8 @@ test("the decisions resource checks the model catalog and marks agent writes", a
     rules: async () => saved,
     saveProvider: async () => {},
     removeProvider: async () => {},
-    saveRule: async (r: DecisionRule, by: { agent: boolean }) => void saved.push({ ...r, id: `${r.id}:${by.agent}` }),
+    saveRule: async (r: DecisionRule, by: { actorId: string }) =>
+      void saved.push({ ...r, id: `${r.id}:${by.actorId}` }),
     removeRule: async () => {},
   };
   const modelId = selectableBaseModels()[0]!.id;
@@ -362,13 +368,13 @@ test("the decisions resource checks the model catalog and marks agent writes", a
       "org:default-org",
     );
   assert.match(err(await apply({ rule: route() })), /m-deep is not in this deployment's model catalog/);
-  assert.deepEqual(await apply({ rule: { ...rule, mode: "observe" } }, { actorId: "admin@x.com" }), { ok: true });
-  assert.deepEqual(await apply({ rule }), { ok: true });
+  assert.deepEqual(await apply({ rule }, { actorId: "admin@x.com" }), { ok: true });
+  assert.deepEqual(await apply({ rule: { ...rule, mode: "observe" } }), { ok: true });
   assert.deepEqual(
     saved.map((r) => [r.id, r.mode]),
     [
-      ["router:true", "observe"],
-      ["router:false", "enforce"],
+      ["router:admin@x.com", "enforce"],
+      ["router:admin@x.com", "observe"],
     ],
   );
 });
